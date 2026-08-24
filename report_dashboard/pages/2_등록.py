@@ -7,6 +7,19 @@
 import uuid
 from datetime import datetime
 
+# Streamlit Cloud는 실행할 스크립트가 있는 폴더만 sys.path에 넣는다(공식 소스
+# streamlit/web/bootstrap.py::_fix_sys_path 확인함) — 저장소 루트는 안 들어간다.
+# 로컬은 `python3 -m streamlit run`(-m이 CWD를 넣어줌)이나 pytest(패키지 루트를
+# 자동 추가)가 이 문제를 가려서 배포 전엔 안 드러났다. report_dashboard.* 절대
+# 임포트가 되려면 저장소 루트가 필요하므로 여기서 직접 넣는다.
+import os
+import sys
+
+_here = os.path.abspath(__file__)
+_repo_root = _here[: _here.index(os.sep + "report_dashboard" + os.sep)]
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
 import streamlit as st
 
 from report_dashboard.auth import (
