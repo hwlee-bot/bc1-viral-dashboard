@@ -28,9 +28,54 @@ def latest_views(metrics: list[dict], content_id: str) -> int:
     return latest["views"] if latest else 0
 
 
+def latest_rank_row(ranks: list[dict], content_id: str) -> dict | None:
+    """content_id의 가장 최근 captured_at 시점 행 중 VIEW 탭을 우선해서 돌려준다.
+
+    Plan 3부터 콜렉터가 한 번의 실행에서 같은 content_id에 VIEW/블로그API/
+    카페API 3탭 행을 동시에(같은 captured_at으로) 남길 수 있다. 그중 사람이
+    실제로 보는 통합검색에 가장 가까운 VIEW를 우선한다 — 없으면 나중에
+    append된 행(리스트 뒤쪽)을 쓴다. search_tab이 아예 없는 옛 행(Plan 3
+    이전 테스트 데이터 등)도 안전하게 처리하도록 .get()을 쓴다.
+    """
+    matching = [r for r in ranks if r["content_id"] == content_id]
+    if not matching:
+        return None
+    latest_captured_at = max(r["captured_at"] for r in matching)
+    same_time = [r for r in matching if r["captured_at"] == latest_captured_at]
+    for row in same_time:
+        if row.get("search_tab") == "VIEW":
+            return row
+    return same_time[-1]
+
+
 def latest_rank(ranks: list[dict], content_id: str) -> int | None:
-    latest = _latest_by_content(ranks, content_id, "captured_at")
-    return latest["rank"] if latest else None
+    row = latest_rank_row(ranks, content_id)
+    return row["rank"] if row else None
+
+
+KEYWORD_RANK_TABS = ("VIEW", "블로그API", "카페API")
+
+
+def keyword_rank_summary(ranks: list[dict], keywords: list[str]) -> dict:
+    """키워드별로 탭마다 가장 최근 관측 행을 묶어 돌려준다.
+
+    반환: {키워드: {탭: 최신 행 dict}}. 그 탭에 이 키워드로 저장된 행이 아예
+    없으면 그 탭 키 자체가 빠진다 — "검색했지만 매치 없음"인 rank=None 행과
+    "이 탭이 아직 한 번도 안 돌았음"을 구분하기 위해서다.
+    """
+    summary = {}
+    for keyword in keywords:
+        keyword_ranks = [r for r in ranks if r["keyword"] == keyword]
+        by_tab = {}
+        for tab in KEYWORD_RANK_TABS:
+            tab_ranks = [r for r in keyword_ranks if r.get("search_tab") == tab]
+            if not tab_ranks:
+                continue
+            by_tab[tab] = max(
+                enumerate(tab_ranks), key=lambda pair: (pair[1]["captured_at"], pair[0])
+            )[1]
+        summary[keyword] = by_tab
+    return summary
 
 
 def exposure_counts_by_channel(contents: list[dict], ranks: list[dict]) -> dict:
@@ -60,9 +105,9 @@ def build_export_markdown(
         if latest_metric:
             lines.append(f"- 최근 조회수: {latest_metric['views']} ({latest_metric['captured_at']})")
 
-        latest_rank_row = _latest_by_content(ranks, cid, "captured_at")
-        if latest_rank_row:
-            lines.append(f"- 네이버 \"{latest_rank_row['keyword']}\" 순위: {latest_rank_row['rank']}위")
+        rank_row = latest_rank_row(ranks, cid)
+        if rank_row:
+            lines.append(f"- 네이버 \"{rank_row['keyword']}\" 순위: {rank_row['rank']}위")
 
         content_comments = [c for c in comments if c["content_id"] == cid]
         if content_comments:

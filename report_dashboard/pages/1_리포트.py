@@ -40,7 +40,8 @@ import streamlit as st
 from report_dashboard.auth import require_role
 from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import (
-    build_export_markdown, exposure_counts_by_channel, latest_views, target_progress_pct,
+    build_export_markdown, exposure_counts_by_channel, keyword_rank_summary, latest_rank_row, latest_views,
+    target_progress_pct,
 )
 
 # 게이트를 이 파일에서도 호출한다 — app.py의 라우터 게이트에만 의존하면 안 된다.
@@ -320,10 +321,9 @@ def _render_chart_row(metrics: list[dict]) -> None:
         st.caption("아직 수집된 조회수가 없다.")
 
 
-def _render_rank_and_accuracy(content_ranks: list[dict]) -> None:
-    if not content_ranks:
+def _render_rank_and_accuracy(latest: dict | None) -> None:
+    if not latest:
         return
-    latest = content_ranks[-1]
     chip_class = _ACCURACY_CHIP_CLASS.get(latest["accuracy"], "pending")
     st.markdown(
         f'<div class="vr-rank-meta">'
@@ -348,6 +348,32 @@ def _render_comments(content_comments: list[dict]) -> None:
             f'<span class="vr-nick">— {_esc(nickname)}</span></div>'
         )
     st.markdown(f'<div class="vr-comments">{"".join(lines)}</div>', unsafe_allow_html=True)
+
+
+def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
+    if not summary:
+        st.caption("등록된 추적 키워드가 없다.")
+        return
+    for keyword, by_tab in summary.items():
+        st.markdown(f"**{_esc(keyword)}**")
+        lines = []
+        for tab in ("VIEW", "블로그API", "카페API"):
+            if tab not in by_tab:
+                continue
+            row = by_tab[tab]
+            if row["rank"] is None:
+                lines.append(f'<div class="vr-rank-row">{_esc(tab)} — 아직 잡히는 콘텐츠 없음</div>')
+                continue
+            matched = contents_by_id.get(row["content_id"])
+            matched_label = _esc(matched.get("title") or matched["url"]) if matched else "(콘텐츠 정보 없음)"
+            lines.append(
+                f'<div class="vr-rank-row"><span class="vr-rank-badge">{row["rank"]}위</span>'
+                f'{_esc(tab)} · {matched_label}</div>'
+            )
+        if not lines:
+            st.caption("아직 수집된 적 없음.")
+        else:
+            st.markdown(f'<div class="vr-rank-meta">{"".join(lines)}</div>', unsafe_allow_html=True)
 
 
 repo = ReportRepo()
@@ -387,6 +413,21 @@ st.subheader("채널별 네이버 상위노출 콘텐츠 수")
 exposure_counts = exposure_counts_by_channel(contents, all_ranks)
 _render_exposure_rank_list(exposure_counts)
 
+# -- 캠페인 키워드 순위 --------------------------------------------------
+
+st.subheader("캠페인 키워드 순위")
+
+# keyword_ranks()는 캠페인으로 필터링하지 않는다(스키마에 campaign_id가 없다) —
+# 이 캠페인에 등록된 키워드 문자열로만 걸러낸다. 알려진 한계: 다른 캠페인이
+# 우연히 똑같은 키워드 문자열을 쓰면 그 결과도 섞여 보인다(design.md §3.2 참고,
+# 스키마 변경 없이 가기로 한 결정).
+target_keywords = list(dict.fromkeys(k["keyword"] for k in repo.target_keywords(campaign_id=campaign_id)))
+keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
+contents_by_id = {c["content_id"]: c for c in repo.contents(campaign_id=campaign_id)}
+
+keyword_summary = keyword_rank_summary(keyword_ranks_for_campaign, target_keywords)
+_render_keyword_watchlist(keyword_summary, contents_by_id)
+
 # -- 채널 목표 대비 (채널 스코프 목표가 있는 채널만) -----------------------
 
 channel_targets = {
@@ -423,8 +464,7 @@ for content in contents:
         else:
             st.caption("목표 대비: 미설정")
 
-        content_ranks = sorted((r for r in all_ranks if r["content_id"] == cid), key=lambda r: r["captured_at"])
-        _render_rank_and_accuracy(content_ranks)
+        _render_rank_and_accuracy(latest_rank_row(all_ranks, cid))
 
         content_comments = [c for c in all_comments if c["content_id"] == cid]
         _render_comments(content_comments)

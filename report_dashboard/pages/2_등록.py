@@ -181,20 +181,68 @@ if targets:
 else:
     st.info("아직 등록된 목표가 없다.")
 
-# -- 4. 수동 조회수 입력 ------------------------------------------------
+# -- 4. 캠페인 키워드 등록 ------------------------------------------------
 
-st.header("4. 수동 조회수 입력")
+st.header("4. 캠페인 키워드 등록")
+st.caption("네이버 순위 자동 수집기가 매일 이 목록의 키워드를 검색해서 이 캠페인 콘텐츠 중 잡히는 게 있는지 확인한다.")
+
+if not campaign_labels:
+    st.info("먼저 캠페인을 등록해야 키워드를 등록할 수 있다.")
+else:
+    with st.form("target_keyword_form"):
+        keyword_campaign_label = st.selectbox(
+            "캠페인", options=list(campaign_labels.keys()), key="target_keyword_campaign"
+        )
+        keyword_text = st.text_input("키워드", key="target_keyword_text")
+        submitted_keyword = st.form_submit_button("키워드 저장", key="target_keyword_submit")
+
+    if submitted_keyword:
+        selected_campaign_id = campaign_labels[keyword_campaign_label]
+        existing_keywords = {k["keyword"] for k in repo.target_keywords(campaign_id=selected_campaign_id)}
+        if not keyword_text:
+            st.warning("키워드를 입력해야 저장된다.")
+        elif keyword_text in existing_keywords:
+            st.warning(f"'{keyword_text}'는 이 캠페인에 이미 등록돼 있다. 중복 등록하면 수집기가 같은 키워드를 하루에 두 번 검색한다.")
+        else:
+            repo.save_target_keyword({
+                "keyword_id": _new_id("kw"),
+                "campaign_id": selected_campaign_id,
+                "keyword": keyword_text,
+                "created_at": _now(),
+            })
+            st.success(f"{keyword_text} 저장했다.")
+            # rerun 안 씀 — Task 4와 같은 이유(성공 메시지가 사라지는 버그, 이미 수정됨)
+
+target_keywords_all = repo.target_keywords()
+if target_keywords_all:
+    st.dataframe(target_keywords_all, width="stretch")
+else:
+    st.info("아직 등록된 키워드가 없다.")
+
+# -- 5. 수동 조회수 입력 ------------------------------------------------
+
+st.header("5. 수동 조회수 입력")
 st.caption("인스타그램 콘텐츠는 항상 여기서 입력한다. 그 외 채널은 자동 수집이 실패했을 때만 여기 뜬다.")
 
 latest_run = repo.latest_collection_run()
 failed_content_ids = set((latest_run or {}).get("failed_items", []))
 all_contents = repo.contents()
 
-manual_candidates = {
+fresh_manual_candidates = {
     _label(c): c["content_id"]
     for c in all_contents
     if c["channel"] == "instagram" or c["content_id"] in failed_content_ids
 }
+
+# 후보 목록을 매 rerun마다 통째로 새로 계산한 값으로 덮어쓰면, 폼을 그린 뒤
+# 제출하기 전에 크론이 끼어들어 후보가 사라지는 순간 selectbox 옵션에서도
+# 사라진다 — 그러면 위젯 자체가 다시 그려지지 않아 방금 누른 제출 이벤트가
+# 조용히 유실된다(경고 메시지조차 못 띄운다). 그래서 한 번 후보로 보인
+# 콘텐츠는 세션이 끝날 때까지 옵션에 남겨 폼이 계속 그려지게 하고, 실제
+# 유효성은 아래 제출 처리에서 이번 실행의 최신 failed_content_ids로 다시
+# 확인한다(동시성 방어).
+manual_candidates = st.session_state.setdefault("manual_candidates_snapshot", {})
+manual_candidates.update(fresh_manual_candidates)
 
 if not manual_candidates:
     st.info("지금은 수동 입력이 필요한 콘텐츠가 없다.")
@@ -207,22 +255,35 @@ else:
     if submitted_manual:
         manual_content_id = manual_candidates[manual_label]
         manual_channel = next(c["channel"] for c in all_contents if c["content_id"] == manual_content_id)
-        source = "manual_instagram" if manual_channel == "instagram" else "manual_fallback"
-        repo.save_content_metric({
-            "content_id": manual_content_id,
-            "captured_at": _now(),
-            "views": int(manual_views),
-            "source": source,
-            "accuracy": "실측",
-        })
-        st.success(f"{manual_label} 조회수 {int(manual_views)} 저장했다.")
-        # rerun 안 씀 — Task 4와 같은 이유(성공 메시지가 사라지는 버그, 이미 수정됨)
 
-# -- 5. 수집 상태 ------------------------------------------------------
-# latest_run / failed_content_ids / all_contents 는 섹션 4에서 이미 계산해둔 값을 그대로 쓴다.
-# 섹션 4를 제거·재배치하면 여기서 NameError가 난다.
+        # 폼을 그린 시점과 제출 시점 사이에 자동 수집 크론이 끼어들어 이 콘텐츠의
+        # '실패' 상태가 사라졌을 수 있다 — 제출 직전에 다시 확인한다(동시성 방어).
+        # failed_content_ids는 이번 실행에서 이미 최신 상태로 읽어둔 값이다.
+        still_valid = manual_channel == "instagram" or manual_content_id in failed_content_ids
 
-st.header("5. 수집 상태")
+        if not still_valid:
+            manual_candidates.pop(manual_label, None)
+            st.warning(
+                f"{manual_label}의 수집 상태가 방금 바뀌었다(자동 수집이 먼저 채웠을 수 있다). "
+                "새로고침 후 다시 확인해달라."
+            )
+        else:
+            source = "manual_instagram" if manual_channel == "instagram" else "manual_fallback"
+            repo.save_content_metric({
+                "content_id": manual_content_id,
+                "captured_at": _now(),
+                "views": int(manual_views),
+                "source": source,
+                "accuracy": "실측",
+            })
+            st.success(f"{manual_label} 조회수 {int(manual_views)} 저장했다.")
+            # rerun 안 씀 — Task 4와 같은 이유(성공 메시지가 사라지는 버그, 이미 수정됨)
+
+# -- 6. 수집 상태 ------------------------------------------------------
+# latest_run / failed_content_ids / all_contents 는 섹션 5에서 이미 계산해둔 값을 그대로 쓴다.
+# 섹션 5를 제거·재배치하면 여기서 NameError가 난다.
+
+st.header("6. 수집 상태")
 
 if latest_run is None:
     st.info("아직 자동 수집이 실행된 적 없다.")
@@ -235,9 +296,9 @@ else:
     else:
         st.success("직전 실행에서 실패한 항목 없음.")
 
-# -- 6. 광고주 계정 -----------------------------------------------------
+# -- 7. 광고주 계정 -----------------------------------------------------
 
-st.header("6. 광고주 계정")
+st.header("7. 광고주 계정")
 st.caption(
     "여기 등록된 구글 계정만 리포트를 볼 수 있다. 우리 팀 계정은 여기가 아니라 "
     "배포 설정(secrets)에 있다 — 시트를 고쳐 관리자 권한을 얻을 수 없게 하기 위해서다."

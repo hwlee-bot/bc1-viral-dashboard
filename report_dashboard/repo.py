@@ -138,6 +138,16 @@ class ReportRepo:
     def save_target(self, row: dict) -> None:
         self.store.save("viral_targets", row)
 
+    # -- 캠페인 키워드 워치리스트 -----------------------------------------
+
+    def target_keywords(self, campaign_id: str | None = None) -> list[dict]:
+        if campaign_id is not None:
+            return self.store.find("viral_target_keywords", campaign_id=campaign_id)
+        return self.store.load("viral_target_keywords")
+
+    def save_target_keyword(self, row: dict) -> None:
+        self.store.save("viral_target_keywords", row)
+
     # -- 조회수 시계열 (append-only, 리비전 없음) -----------------------
 
     def content_metrics(self, content_id: str | None = None) -> list[dict]:
@@ -176,15 +186,18 @@ class ReportRepo:
     def save_collection_run(self, row: dict) -> None:
         self.store.save("viral_collection_runs", row)
 
-    def latest_collection_run(self) -> dict | None:
-        """가장 최근 수집 실행을 돌려준다.
+    def latest_collection_run(self, run_type: str = "content_metrics") -> dict | None:
+        """가장 최근 수집 실행을 돌려준다. run_type으로 어느 수집기인지 구분한다.
 
         started_at이 여러 실행에서 같으면(예: 같은 초에 두 크론이 겹쳐 돈 경우)
         더 나중에 append된 실행을 우선한다 — 먼저 나온 것을 우선하는 Python
         기본 max() 동작은 이 경우 실제로 더 최신인 실행을 놓칠 수 있다.
         reporting.py의 _latest_by_content와 같은 패턴.
+
+        run_type 필드 자체가 없는 옛 행(Plan 3 이전에 저장된 행)은
+        content_metrics로 간주한다 — 그때 유일하게 쓰던 수집 종류였기 때문이다.
         """
-        runs = self.collection_runs()
+        runs = [r for r in self.collection_runs() if r.get("run_type", "content_metrics") == run_type]
         if not runs:
             return None
         return max(enumerate(runs), key=lambda pair: (pair[1].get("started_at", ""), pair[0]))[1]
