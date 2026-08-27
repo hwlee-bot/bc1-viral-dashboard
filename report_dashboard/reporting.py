@@ -57,11 +57,19 @@ KEYWORD_RANK_TABS = ("VIEW", "블로그API", "카페API")
 
 
 def keyword_rank_summary(ranks: list[dict], keywords: list[str]) -> dict:
-    """키워드별로 탭마다 가장 최근 관측 행을 묶어 돌려준다.
+    """키워드별로 탭마다 가장 최근 수집 배치에서 잡힌 콘텐츠 전부를 순위
+    오름차순으로 묶어 돌려준다.
 
-    반환: {키워드: {탭: 최신 행 dict}}. 그 탭에 이 키워드로 저장된 행이 아예
+    "가장 최근 수집 배치"는 그 키워드·탭 조합에서 captured_at 문자열이 가장
+    큰 값과 정확히 일치하는 행 전부다 — collect_naver_ranks.py::main()이 한
+    번의 실행 안에서는 모든 행에 똑같은 now 타임스탬프를 쓰기 때문에
+    (루프 시작 전에 한 번만 계산), 이 문자열 일치가 "같은 실행에서 나온 행"과
+    정확히 대응한다. 별도 run_id 연결이 필요 없다.
+
+    반환: {키워드: {탭: [행, ...]}}. 그 탭에 이 키워드로 저장된 행이 아예
     없으면 그 탭 키 자체가 빠진다 — "검색했지만 매치 없음"인 rank=None 행과
-    "이 탭이 아직 한 번도 안 돌았음"을 구분하기 위해서다.
+    "이 탭이 아직 한 번도 안 돌았음"을 구분하기 위해서다(매치 없음도 행은
+    있다 — content_id=""인 행 하나로, 리스트에 그 행 하나만 담긴다).
     """
     summary = {}
     for keyword in keywords:
@@ -71,9 +79,11 @@ def keyword_rank_summary(ranks: list[dict], keywords: list[str]) -> dict:
             tab_ranks = [r for r in keyword_ranks if r.get("search_tab") == tab]
             if not tab_ranks:
                 continue
-            by_tab[tab] = max(
-                enumerate(tab_ranks), key=lambda pair: (pair[1]["captured_at"], pair[0])
-            )[1]
+            latest_captured_at = max(r["captured_at"] for r in tab_ranks)
+            latest_batch = [r for r in tab_ranks if r["captured_at"] == latest_captured_at]
+            by_tab[tab] = sorted(
+                latest_batch, key=lambda r: (r["rank"] is None, r["rank"] if r["rank"] is not None else 0)
+            )
         summary[keyword] = by_tab
     return summary
 
@@ -87,10 +97,53 @@ def exposure_counts_by_channel(contents: list[dict], ranks: list[dict]) -> dict:
     return dict(counts)
 
 
+def channel_distribution(contents: list[dict]) -> dict[str, int]:
+    """캠페인에 등록된 전체 콘텐츠가 채널별로 몇 건인지 센다.
+
+    exposure_counts_by_channel()과 이름이 비슷하지만 다른 지표다 — 저건
+    "네이버 상위노출까지 된 것만" 세고, 이건 "등록된 전체"를 센다. 요약·리포트
+    페이지의 채널 비중 도넛/스택바가 이 함수를 쓴다.
+    """
+    counts: dict[str, int] = defaultdict(int)
+    for content in contents:
+        counts[content["channel"]] += 1
+    return dict(counts)
+
+
+def rank_history(ranks_for_content: list[dict]) -> list[tuple[str, int]]:
+    """콘텐츠 하나의 순위 이력을 관측일 오름차순으로 전부 돌려준다.
+
+    (수집일, 순위) 쌍의 리스트. 상위노출이 안 돼 순위를 못 잡은 날은
+    0으로 취급한다 — "측정 불가"를 나타내는 sentinel이며, 화면 쪽
+    (1_리포트.py)에서 0을 "미노출"로 따로 표시한다.
+
+    같은 날 여러 키워드가 동시에 잡히면 그 날의 대표값은 더 잘 잡힌(작은,
+    0 제외) 순위를 쓴다 — "그날 이 콘텐츠가 얼마나 눈에 띄었는가"를 가장
+    잘 나타내는 값이 그거다.
+    """
+    by_date: dict[str, int] = {}
+    for row in ranks_for_content:
+        date = row["captured_at"]
+        rank = row["rank"] if row["rank"] is not None else 0
+        if date not in by_date:
+            by_date[date] = rank
+        elif rank != 0 and (by_date[date] == 0 or rank < by_date[date]):
+            by_date[date] = rank
+    return [(date, by_date[date]) for date in sorted(by_date.keys())]
+
+
 def target_progress_pct(current_views: int, target_views: int) -> int:
     if not target_views:
         return 0
     return round(current_views / target_views * 100)
+
+
+def participation_rate(views: int, comments_count: int | None) -> float | None:
+    """댓글수/조회수를 퍼센트로. 계산할 수 없으면 None — 0%나 지어낸 값 대신
+    호출부가 '—'로 정직하게 표시하게 한다."""
+    if comments_count is None or not views:
+        return None
+    return round(comments_count / views * 100, 3)
 
 
 def build_export_markdown(
