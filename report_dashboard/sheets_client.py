@@ -60,3 +60,15 @@ class SheetsClient:
         ).execute()
         # 빈 행은 [] 로 오므로 인덱싱 대신 길이를 확인한다.
         return [row[0] if row else "" for row in resp.get("values", [])]
+
+    def read_range(self, tab: str, cell_range: str = "") -> list[list[str]]:
+        """탭 전체 또는 지정한 범위를 raw grid로 읽는다.
+
+        `read_column_a`와 달리 빈 칸을 패딩하지 않는다 — 호출자(백필 파서)가
+        각 행의 길이가 다를 수 있다는 것을 알고 안전하게 인덱싱해야 한다.
+        """
+        rng = f"{tab}!{cell_range}" if cell_range else tab
+        resp = self.service.spreadsheets().values().get(
+            spreadsheetId=self.spreadsheet_id, range=rng
+        ).execute()
+        return resp.get("values", [])

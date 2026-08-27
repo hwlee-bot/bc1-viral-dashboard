@@ -1,4 +1,4 @@
-"""캠페인·콘텐츠 등록, 목표조회수 설정, 수동 조회수 입력, 수집 상태 확인.
+"""캠페인·콘텐츠 등록, 캠페인 키워드 등록, 수동 조회수 입력, 수집 상태 확인.
 
 바이럴 성과 리포팅 대시보드의 관리자 화면. 자동 수집(cron)이 못 채우는
 칸(인스타그램 전량, 그 외 채널의 수집 실패 항목)은 여기서 사람이 채운다.
@@ -25,6 +25,7 @@ import streamlit as st
 from report_dashboard.auth import (
     ROLE_TEAM, USERS_TABLE, clear_client_emails_cache, client_emails, require_role,
 )
+from report_dashboard import content_sheet_sync
 from report_dashboard.repo import ReportRepo
 
 # 게이트를 이 파일에서도 호출한다 — 이유는 1_리포트.py 상단 주석과 같다
@@ -52,7 +53,27 @@ def _label(content: dict) -> str:
 
 repo = ReportRepo()
 
-st.title("등록 · 관리자")
+st.markdown(
+    """
+<style>
+.vr-admin-amb {
+  position: relative; margin: -1rem -1rem 1.5rem; padding: 30px 32px 30px;
+  background: linear-gradient(135deg, #ffe066 0%, #fbc02d 55%, #f2a30f 100%);
+}
+.vr-admin-amb-brand { font-size: 13px; font-weight: 600; color: rgba(30,22,0,0.85); }
+.vr-admin-amb-brand span { color: #7a4a00; }
+.vr-admin-amb-title { margin-top: 20px; font-size: 24px; font-weight: 700; color: #1e1600; letter-spacing: -0.02em; }
+[data-testid="stHeading"] h2 {
+  display: flex; align-items: center; gap: 8px;
+}
+</style>
+<div class="vr-admin-amb">
+  <div class="vr-admin-amb-brand">바이럴 <span>리포팅</span></div>
+  <div class="vr-admin-amb-title">등록 · 관리자</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 # -- 1. 캠페인 등록 ---------------------------------------------------
 
@@ -119,71 +140,79 @@ else:
             st.success(f"{title or url} 저장했다.")
             # rerun 안 씀 — Task 4와 같은 이유(성공 메시지가 사라지는 버그, 이미 수정됨)
 
+    st.markdown("**시트에서 불러오기**")
+    sheet_campaign_label = st.selectbox(
+        "캠페인", options=list(campaign_labels.keys()), key="sheet_sync_campaign",
+    )
+    sheet_campaign_id = campaign_labels[sheet_campaign_label]
+    existing_link = repo.content_sheet_link(sheet_campaign_id)
+    default_sheet_url = existing_link["spreadsheet_url"] if existing_link else ""
+    # st.text_input의 value=는 key가 이미 session_state에 있으면 무시된다 — 그래서
+    # 캠페인을 바꿔도 URL 입력창이 이전 캠페인 값을 계속 들고 있는 버그가 있었다
+    # (최종 리뷰에서 AppTest로 확인됨: A 선택 → B로 전환해도 박스가 A의 URL을
+    # 보여줌 — 그 상태로 동기화하면 A 시트가 B 캠페인에 섞여 들어간다).
+    # 선택된 캠페인이 직전 렌더와 달라졌을 때만 박스 값을 그 캠페인의 저장된
+    # URL로 리셋한다.
+    if st.session_state.get("sheet_sync_campaign_shown") != sheet_campaign_id:
+        st.session_state["sheet_sync_url"] = default_sheet_url
+        st.session_state["sheet_sync_campaign_shown"] = sheet_campaign_id
+    sheet_url = st.text_input("구글시트 URL", key="sheet_sync_url")
+    sync_clicked = st.button("시트에서 불러오기", key="sheet_sync_submit")
+
+    if sync_clicked:
+        spreadsheet_id = content_sheet_sync.extract_spreadsheet_id(sheet_url)
+        if spreadsheet_id is None:
+            st.error("올바른 구글시트 링크가 아니다.")
+        else:
+            try:
+                grid = content_sheet_sync.fetch_sheet_rows(spreadsheet_id)
+            except Exception as exc:
+                if "403" in str(exc) or "PERMISSION_DENIED" in str(exc):
+                    st.error(
+                        "이 시트에 서비스 계정 접근 권한이 없다 — "
+                        "bc1-viral@viral-solution-505017.iam.gserviceaccount.com을 "
+                        "뷰어로 공유해달라."
+                    )
+                else:
+                    st.error(f"시트를 읽을 수 없다: {exc}")
+            else:
+                existing_urls = {c["url"] for c in repo.contents(campaign_id=sheet_campaign_id)}
+                candidates, skipped = content_sheet_sync.parse_sheet_content_rows(grid, existing_urls)
+                now = _now()
+                for c in candidates:
+                    repo.save_content({
+                        "content_id": _new_id("cnt"),
+                        "campaign_id": sheet_campaign_id,
+                        "channel": c["channel"],
+                        "url": c["url"],
+                        "title": c["title"],
+                        "release_at": c["release_at"],
+                        "created_at": now,
+                    })
+                if existing_link is None or existing_link["spreadsheet_url"] != sheet_url:
+                    repo.save_content_sheet_link({
+                        "campaign_id": sheet_campaign_id,
+                        "spreadsheet_url": sheet_url,
+                        "created_at": now,
+                    })
+                dup_count = sum(1 for s in skipped if "이미 등록된 URL" in s)
+                error_count = len(skipped) - dup_count
+                st.success(
+                    f"{len(candidates)}건 신규 등록 · {dup_count}건 중복 건너뜀 · "
+                    f"{error_count}건 형식 오류로 건너뜀"
+                )
+                if skipped:
+                    st.caption(" / ".join(skipped))
+
 contents = repo.contents()
 if contents:
     st.dataframe(contents, width="stretch")
 else:
     st.info("아직 등록된 콘텐츠가 없다.")
 
-# -- 3. 목표조회수 등록 ------------------------------------------------
+# -- 3. 캠페인 키워드 등록 ------------------------------------------------
 
-st.header("3. 목표조회수 등록")
-
-if not campaign_labels:
-    st.info("먼저 캠페인을 등록해야 목표를 등록할 수 있다.")
-else:
-    target_campaign_label = st.selectbox(
-        "캠페인", options=list(campaign_labels.keys()), key="target_campaign_picker"
-    )
-    target_campaign_id = campaign_labels[target_campaign_label]
-    scope_type = st.selectbox("목표 단위", options=["content", "channel"], key="target_scope_type_picker")
-
-    if scope_type == "content":
-        scope_options = {
-            _label(c): c["content_id"]
-            for c in repo.contents(campaign_id=target_campaign_id)
-        }
-    else:
-        scope_options = {ch: ch for ch in CHANNELS}
-
-    with st.form(f"target_form__{target_campaign_id}__{scope_type}"):
-        scope_label = st.selectbox(
-            "대상",
-            options=list(scope_options.keys()) or ["(등록된 대상 없음)"],
-            key=f"target_scope_key__{target_campaign_id}__{scope_type}",
-        )
-        target_views = st.number_input(
-            "목표 조회수", min_value=0, step=100,
-            key=f"target_views__{target_campaign_id}__{scope_type}",
-        )
-        submitted_target = st.form_submit_button(
-            "목표 저장", key=f"target_submit__{target_campaign_id}__{scope_type}"
-        )
-
-    if submitted_target:
-        if scope_label not in scope_options:
-            st.warning("대상을 먼저 등록해야 목표를 저장할 수 있다.")
-        else:
-            repo.save_target({
-                "target_id": _new_id("tgt"),
-                "campaign_id": target_campaign_id,
-                "scope_type": scope_type,
-                "scope_key": scope_options[scope_label],
-                "target_views": int(target_views),
-                "created_at": _now(),
-            })
-            st.success(f"{scope_label} 목표 {int(target_views)}회 저장했다.")
-            # rerun 안 씀 — Task 4와 같은 이유(성공 메시지가 사라지는 버그, 이미 수정됨)
-
-targets = repo.targets()
-if targets:
-    st.dataframe(targets, width="stretch")
-else:
-    st.info("아직 등록된 목표가 없다.")
-
-# -- 4. 캠페인 키워드 등록 ------------------------------------------------
-
-st.header("4. 캠페인 키워드 등록")
+st.header("3. 캠페인 키워드 등록")
 st.caption("네이버 순위 자동 수집기가 매일 이 목록의 키워드를 검색해서 이 캠페인 콘텐츠 중 잡히는 게 있는지 확인한다.")
 
 if not campaign_labels:
@@ -219,9 +248,9 @@ if target_keywords_all:
 else:
     st.info("아직 등록된 키워드가 없다.")
 
-# -- 5. 수동 조회수 입력 ------------------------------------------------
+# -- 4. 수동 조회수 입력 ------------------------------------------------
 
-st.header("5. 수동 조회수 입력")
+st.header("4. 수동 조회수 입력")
 st.caption("인스타그램 콘텐츠는 항상 여기서 입력한다. 그 외 채널은 자동 수집이 실패했을 때만 여기 뜬다.")
 
 latest_run = repo.latest_collection_run()
@@ -279,11 +308,11 @@ else:
             st.success(f"{manual_label} 조회수 {int(manual_views)} 저장했다.")
             # rerun 안 씀 — Task 4와 같은 이유(성공 메시지가 사라지는 버그, 이미 수정됨)
 
-# -- 6. 수집 상태 ------------------------------------------------------
-# latest_run / failed_content_ids / all_contents 는 섹션 5에서 이미 계산해둔 값을 그대로 쓴다.
-# 섹션 5를 제거·재배치하면 여기서 NameError가 난다.
+# -- 5. 수집 상태 ------------------------------------------------------
+# latest_run / failed_content_ids / all_contents 는 섹션 4에서 이미 계산해둔 값을 그대로 쓴다.
+# 섹션 4를 제거·재배치하면 여기서 NameError가 난다.
 
-st.header("6. 수집 상태")
+st.header("5. 수집 상태")
 
 if latest_run is None:
     st.info("아직 자동 수집이 실행된 적 없다.")
@@ -296,9 +325,9 @@ else:
     else:
         st.success("직전 실행에서 실패한 항목 없음.")
 
-# -- 7. 광고주 계정 -----------------------------------------------------
+# -- 6. 광고주 계정 -----------------------------------------------------
 
-st.header("7. 광고주 계정")
+st.header("6. 광고주 계정")
 st.caption(
     "여기 등록된 구글 계정만 리포트를 볼 수 있다. 우리 팀 계정은 여기가 아니라 "
     "배포 설정(secrets)에 있다 — 시트를 고쳐 관리자 권한을 얻을 수 없게 하기 위해서다."

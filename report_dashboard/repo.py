@@ -148,6 +148,16 @@ class ReportRepo:
     def save_target_keyword(self, row: dict) -> None:
         self.store.save("viral_target_keywords", row)
 
+    # -- 콘텐츠 시트 연동 링크 (append-only, latest만 의미있음) --------------
+
+    def content_sheet_link(self, campaign_id: str) -> dict | None:
+        """이 캠페인에 마지막으로 저장된 시트 URL. append-only라 최신 하나만 쓴다."""
+        rows = self.store.find("viral_content_sheet_links", campaign_id=campaign_id)
+        return rows[-1] if rows else None
+
+    def save_content_sheet_link(self, row: dict) -> None:
+        self.store.save("viral_content_sheet_links", row)
+
     # -- 조회수 시계열 (append-only, 리비전 없음) -----------------------
 
     def content_metrics(self, content_id: str | None = None) -> list[dict]:
