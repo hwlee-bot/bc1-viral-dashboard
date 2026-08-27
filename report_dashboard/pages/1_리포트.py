@@ -40,7 +40,7 @@ from report_dashboard.auth import require_role
 from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import (
     build_export_markdown, channel_distribution, exposure_counts_by_channel, keyword_rank_summary,
-    latest_rank_row, participation_rate, rank_history,
+    latest_rank_row, latest_views, participation_rate, rank_history,
 )
 
 # 게이트를 이 파일에서도 호출한다 — app.py의 라우터 게이트에만 의존하면 안 된다.
@@ -145,8 +145,17 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-kw-tab-head { font-size: 11px; font-weight: 700; color: var(--vr-ink-2); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
 .vr-kw-tab-head .vr-kw-tab-count { font-weight: 500; color: var(--vr-ink-muted); text-transform: none; letter-spacing: 0; }
 .vr-kw-tab-empty { color: var(--vr-ink-muted); font-size: 12px; padding: 4px 0; }
-.vr-kw-content-row { display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 10px; padding: 5px 0; font-size: 12.5px; color: var(--vr-ink-2); }
-.vr-kw-content-date { color: var(--vr-ink-muted); font-size: 11px; }
+/* 한 줄에 하나씩 쌓이던 걸 3열 그리드로 — 매치가 많아지면 세로로 한없이
+   길어지는 대신 가로로 채워나간다. */
+.vr-kw-content-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 14px; }
+.vr-kw-content-row {
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px;
+  background: var(--vr-surface); border-radius: 8px; font-size: 12px; color: var(--vr-ink-2);
+  min-width: 0;
+}
+.vr-kw-content-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vr-kw-content-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.vr-kw-content-date { color: var(--vr-ink-muted); font-size: 10.5px; }
 
 /* ---- 참여율(.vr-card-stats 뉴모피즘 패널을 2분할한 아래쪽 절반 — 위 조회수와
    같은 폰트 크기로 통일했다) ---- */
@@ -202,6 +211,10 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
   transform: translateY(-2px);
   box-shadow: 0 14px 28px -16px rgba(30,25,15,0.22);
 }
+/* 조회수 0(아직 수집 전) 카드 — 목록 맨 아래로 정렬된 것과 짝을 맞춰
+   옅게 처리해서 "데이터 없음"을 한눈에 구분한다. */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--empty) { opacity: 0.55; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--empty):hover { opacity: 0.85; }
 .vr-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:4px; }
 .vr-card-title { font-family: var(--vr-font-display); font-size:15px; font-weight:700; line-height:1.35; color: var(--vr-ink); }
 .vr-card-logo { flex:none; width:26px; height:26px; border-radius:7px; overflow:hidden; display:block; }
@@ -261,6 +274,27 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 /* -- 내보내기 버튼 ------------------------------------------------------ */
 div[data-testid="stDownloadButton"] button { border-radius: 8px !important; font-weight:600 !important; }
 div[data-testid="stDownloadButton"] button:hover { border-color: var(--vr-accent) !important; color: var(--vr-accent) !important; }
+
+/* -- 스크롤 진입 모션 ----------------------------------------------------
+   목업 기획 때 정한 "스크롤하면 카드가 떠오르는" 효과. Streamlit의
+   st.markdown(unsafe_allow_html=True)은 보안상 <script>를 실행하지 않아서
+   IntersectionObserver 기반 JS는 못 쓴다 — 대신 순수 CSS 스크롤 기반
+   애니메이션(animation-timeline: view())으로 같은 효과를 낸다. 이 CSS
+   기능 자체를 못 읽는 브라우저에서는 @supports가 걸러줘서 카드가 그냥
+   평소처럼(불투명 상태로) 바로 보인다 — 못 읽는다고 안 보이는 사고는 없다. */
+@supports (animation-timeline: view()) {
+  @keyframes vr-scroll-in {
+    from { opacity: 0; transform: translateY(18px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker),
+  div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-hero-marker),
+  .vr-kw-card {
+    animation: vr-scroll-in linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 35%;
+  }
+}
 </style>
 <svg width="0" height="0" style="position:absolute;">
   <defs>
@@ -413,21 +447,26 @@ def _render_exposure_rank_list(exposure_counts: dict) -> None:
     st.markdown(f'<div class="vr-rank-list">{"".join(rows)}</div>', unsafe_allow_html=True)
 
 
-def _render_card_header(content: dict) -> None:
+def _render_card_header(content: dict, *, is_empty: bool = False) -> None:
     """카드 전체를 그 콘텐츠 원문 URL로 가는 링크로 만든다.
 
     카드 안에는 버튼·입력창 같은 실제 Streamlit 위젯이 없다(전부 st.markdown/
     st.caption) — 그래서 카드 전체를 덮는 투명 <a> 오버레이(.vr-card-link,
     absolute+inset:0)를 하나 깔아도 클릭을 가로챌 다른 위젯이 없다. 위치 기준은
     위 .vr-card-marker :has() 규칙에서 카드 컨테이너 자체에 준 position:relative.
+
+    is_empty(조회수 0 = 아직 수집 전)면 마커에 --empty 클래스를 추가로 얹어
+    카드 전체를 옅게(투명도) 처리한다 — 목록 맨 아래로 정렬된 것과 짝을 맞춰
+    "아직 데이터 없음"을 시각적으로도 구분한다.
     """
     channel = content["channel"]
     icon = _CHANNEL_ICON.get(channel, "community")
     title = _esc(content.get("title") or content["url"])
     release = _esc(content.get("release_at") or "미정")
     url = _esc(content["url"])
+    empty_class = " vr-card-marker--empty" if is_empty else ""
     st.markdown(
-        f'<span class="vr-card-marker vr-card-marker--{channel}"></span>'
+        f'<span class="vr-card-marker vr-card-marker--{channel}{empty_class}"></span>'
         f'<a class="vr-card-link" href="{url}" target="_blank" rel="noopener noreferrer" '
         f'aria-label="{title} 원문 열기"></a>'
         f'<div class="vr-card-head">'
@@ -605,14 +644,17 @@ def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
             matched_rows = [r for r in tab_rows if r["rank"] is not None]
             if matched_rows:
                 rows_html.append(f'<span class="vr-kw-tab-count"> · 상위노출 {len(matched_rows)}건</span></div>')
+                rows_html.append('<div class="vr-kw-content-grid">')
                 for row in matched_rows:
                     matched = contents_by_id.get(row["content_id"])
                     matched_label = _esc(matched.get("title") or matched["url"]) if matched else "(콘텐츠 정보 없음)"
                     rows_html.append(
-                        f'<div class="vr-kw-content-row"><span class="vr-rank-badge">{row["rank"]}위</span>'
-                        f'<span>{matched_label}</span>'
+                        f'<div class="vr-kw-content-row">'
+                        f'<div class="vr-kw-content-row-top"><span class="vr-rank-badge">{row["rank"]}위</span>'
+                        f'<span class="vr-kw-content-title">{matched_label}</span></div>'
                         f'<span class="vr-kw-content-date">{_esc(row["captured_at"])} 수집</span></div>'
                     )
+                rows_html.append("</div>")
             else:
                 rows_html.append('</div><div class="vr-kw-tab-empty">아직 잡히는 콘텐츠 없음</div>')
             rows_html.append("</div>")
@@ -689,10 +731,17 @@ _render_keyword_watchlist(keyword_summary, contents_by_id)
 
 st.subheader("콘텐츠별 상세")
 
-for content in contents:
+# 조회수 높은 순으로 노출한다. 아직 조회수가 0(=수집 전)인 콘텐츠는 맨
+# 아래로 보내되, 그 안에서는 원래 등록 순서를 유지한다(sorted는 안정 정렬).
+contents_sorted = sorted(
+    contents, key=lambda c: (latest_views(all_metrics, c["content_id"]) == 0, -latest_views(all_metrics, c["content_id"]))
+)
+
+for content in contents_sorted:
     cid = content["content_id"]
+    views = latest_views(all_metrics, cid)
     with st.container(border=True):
-        _render_card_header(content)
+        _render_card_header(content, is_empty=(views == 0))
 
         metrics = sorted((m for m in all_metrics if m["content_id"] == cid), key=lambda m: m["captured_at"])
         content_ranks = [r for r in all_ranks if r["content_id"] == cid]
