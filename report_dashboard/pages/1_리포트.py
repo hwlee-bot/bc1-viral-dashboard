@@ -138,21 +138,26 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-donut-legend-pct { color: var(--vr-ink-muted); font-weight: 500; font-size: 11px; min-width: 34px; text-align: right; }
 
 /* ---- 캠페인 키워드 순위: 탭당 전체 목록 ---- */
-.vr-kw-card { border-radius: 12px; background: var(--vr-page); padding: 16px 18px; margin-bottom: 10px; }
+/* 키워드 카드 자체가 한 줄에 하나씩(st.markdown 호출마다 별도 블록) 쌓이던 걸
+   3열 그리드로 — 모든 키워드 카드를 하나의 st.markdown 호출로 묶어 한
+   .vr-kw-grid 래퍼 안에 넣고, 그 래퍼에 grid를 건다(카드 개수가 3의 배수가
+   아니어도 마지막 줄은 그냥 비워둔다). */
+.vr-kw-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 14px; align-items: start; }
+.vr-kw-card { border-radius: 12px; background: var(--vr-page); padding: 16px 18px; }
 .vr-kw-name { font-size: 14px; font-weight: 700; color: var(--vr-ink); margin-bottom: 12px; }
 .vr-kw-tab-group { margin-bottom: 14px; }
 .vr-kw-tab-group:last-child { margin-bottom: 0; }
 .vr-kw-tab-head { font-size: 11px; font-weight: 700; color: var(--vr-ink-2); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
 .vr-kw-tab-head .vr-kw-tab-count { font-weight: 500; color: var(--vr-ink-muted); text-transform: none; letter-spacing: 0; }
 .vr-kw-tab-empty { color: var(--vr-ink-muted); font-size: 12px; padding: 4px 0; }
-/* 한 줄에 하나씩 쌓이던 걸 3열 그리드로 — 매치가 많아지면 세로로 한없이
-   길어지는 대신 가로로 채워나간다. */
-.vr-kw-content-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 14px; }
+/* 매치된 콘텐츠는 세로 목록 — 키워드 카드 자체가 이제 3열 grid(.vr-kw-grid)라
+   카드 폭이 좁아서, 이 안에서 또 다열 grid를 걸면 항목이 너무 빽빽해진다. */
 .vr-kw-content-row {
-  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; margin-bottom: 6px;
   background: var(--vr-surface); border-radius: 8px; font-size: 12px; color: var(--vr-ink-2);
   min-width: 0;
 }
+.vr-kw-content-row:last-child { margin-bottom: 0; }
 .vr-kw-content-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .vr-kw-content-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .vr-kw-content-date { color: var(--vr-ink-muted); font-size: 10.5px; }
@@ -294,6 +299,19 @@ div[data-testid="stDownloadButton"] button:hover { border-color: var(--vr-accent
     animation-timeline: view();
     animation-range: entry 0% entry 35%;
   }
+
+  /* 조회수·상위노출 그래프 선이 스크롤에 맞춰 "그려지는" 모션 — stroke-dasharray/
+     stroke-dashoffset을 폴리라인 실제 길이(_polyline_length)로 맞춰두고
+     dashoffset을 0으로 애니메이션한다. 시작값은 인라인 속성(stroke-dashoffset)이
+     그대로 0% 키프레임 역할을 하므로 @keyframes에는 to만 적는다. */
+  @keyframes vr-line-draw {
+    to { stroke-dashoffset: 0; }
+  }
+  .vr-line-draw {
+    animation: vr-line-draw linear both;
+    animation-timeline: view();
+    animation-range: entry 10% entry 70%;
+  }
 }
 </style>
 <svg width="0" height="0" style="position:absolute;">
@@ -336,6 +354,17 @@ def _inject_design_system() -> None:
     st.markdown(_STYLE_AND_ICONS, unsafe_allow_html=True)
 
 
+def _polyline_length(points: list[tuple[float, float]]) -> float:
+    """선 그리기(stroke-dashoffset) 애니메이션의 시작값으로 쓸 실제 경로 길이.
+
+    stroke-dasharray/stroke-dashoffset을 이 길이로 맞춰야 애니메이션이 정확히
+    선 끝에서 끝나고, 짧게 잘리거나 남는 부분 없이 깔끔하게 그려진다."""
+    total = 0.0
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        total += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+    return total
+
+
 def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72) -> str:
     """실측 조회수 시계열만 그린다 — 데이터 없는 구간에 추세를 지어내지 않는다.
 
@@ -369,12 +398,14 @@ def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72) -> s
         return f'<svg viewBox="0 0 {width} {height}">{gridlines}{dot}</svg>'
 
     poly = " ".join(f"{px:.1f},{py:.1f}" for px, py in points)
+    draw_len = _polyline_length(points)
+    draw_attrs = f'stroke-dasharray="{draw_len:.1f}" stroke-dashoffset="{draw_len:.1f}"'
     return (
         f'<svg viewBox="0 0 {width} {height}">{gridlines}'
-        f'<polyline points="{poly}" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="6" '
-        f'stroke-linecap="round" stroke-linejoin="round" opacity="0.16" filter="url(#vr-glow-v2)"/>'
-        f'<polyline points="{poly}" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="2.5" '
-        f'stroke-linecap="round" stroke-linejoin="round"/>{dot}</svg>'
+        f'<polyline points="{poly}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="6" '
+        f'stroke-linecap="round" stroke-linejoin="round" opacity="0.16" filter="url(#vr-glow-v2)" {draw_attrs}/>'
+        f'<polyline points="{poly}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="2.5" '
+        f'stroke-linecap="round" stroke-linejoin="round" {draw_attrs}/>{dot}</svg>'
     )
 
 
@@ -525,13 +556,15 @@ def _rank_trend_svg(history: list[tuple[str, int]], width: int = 640, height: in
         segments[-1].append(point)
     def _polyline(seg: list[tuple[float, float]]) -> str:
         pts = " ".join(f"{px:.1f},{py:.1f}" for px, py in seg)
+        draw_len = _polyline_length(seg)
+        draw_attrs = f'stroke-dasharray="{draw_len:.1f}" stroke-dashoffset="{draw_len:.1f}"'
         glow = (
-            f'<polyline points="{pts}" fill="none" stroke="url(#vr-grad-rank)" stroke-width="6" '
-            f'stroke-linecap="round" stroke-linejoin="round" opacity="0.16" filter="url(#vr-glow-v2)"/>'
+            f'<polyline points="{pts}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-rank)" stroke-width="6" '
+            f'stroke-linecap="round" stroke-linejoin="round" opacity="0.16" filter="url(#vr-glow-v2)" {draw_attrs}/>'
         )
         line = (
-            f'<polyline points="{pts}" fill="none" stroke="url(#vr-grad-rank)" stroke-width="2.5" '
-            f'stroke-linecap="round" stroke-linejoin="round"/>'
+            f'<polyline points="{pts}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-rank)" stroke-width="2.5" '
+            f'stroke-linecap="round" stroke-linejoin="round" {draw_attrs}/>'
         )
         return glow + line
 
@@ -633,6 +666,11 @@ def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
     if not summary:
         st.caption("등록된 추적 키워드가 없다.")
         return
+    # 키워드마다 st.markdown()을 따로 호출하면 Streamlit이 각 호출을 독립된
+    # 블록으로 세로로 쌓아서 카드가 한 줄씩 주르륵 나열된다. 모든 키워드 카드를
+    # 하나의 st.markdown 호출로 묶어 .vr-kw-grid 래퍼(3열 grid) 안에 넣어야
+    # 카드끼리 가로로 나란히 배치된다.
+    cards_html = []
     for keyword, by_tab in summary.items():
         rows_html = [f'<div class="vr-kw-name">"{_esc(keyword)}"</div>']
         # VIEW는 GitHub Actions IP가 네이버 WAF에 막혀 항상 미취득이라 화면에서 제외한다.
@@ -644,7 +682,6 @@ def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
             matched_rows = [r for r in tab_rows if r["rank"] is not None]
             if matched_rows:
                 rows_html.append(f'<span class="vr-kw-tab-count"> · 상위노출 {len(matched_rows)}건</span></div>')
-                rows_html.append('<div class="vr-kw-content-grid">')
                 for row in matched_rows:
                     matched = contents_by_id.get(row["content_id"])
                     matched_label = _esc(matched.get("title") or matched["url"]) if matched else "(콘텐츠 정보 없음)"
@@ -654,13 +691,13 @@ def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
                         f'<span class="vr-kw-content-title">{matched_label}</span></div>'
                         f'<span class="vr-kw-content-date">{_esc(row["captured_at"])} 수집</span></div>'
                     )
-                rows_html.append("</div>")
             else:
                 rows_html.append('</div><div class="vr-kw-tab-empty">아직 잡히는 콘텐츠 없음</div>')
             rows_html.append("</div>")
         if len(rows_html) == 1:
             rows_html.append('<div class="vr-kw-tab-empty">아직 수집된 적 없음.</div>')
-        st.markdown(f'<div class="vr-kw-card">{"".join(rows_html)}</div>', unsafe_allow_html=True)
+        cards_html.append(f'<div class="vr-kw-card">{"".join(rows_html)}</div>')
+    st.markdown(f'<div class="vr-kw-grid">{"".join(cards_html)}</div>', unsafe_allow_html=True)
 
 
 repo = ReportRepo()
