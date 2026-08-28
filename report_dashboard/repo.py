@@ -45,7 +45,9 @@ def _sheets_settings() -> dict | None:
     """secrets에서 Sheets 설정을 읽는다. 로컬·테스트에서 없으면 None.
 
     배포 환경(Streamlit Cloud)에는 secrets가 있으니 자동으로 Sheets가 되고,
-    로컬·테스트에는 없으니 자동으로 JSONL이 된다. 새 플래그를 만들지 않는다.
+    로컬·테스트에는 없으니 자동으로 JSONL이 된다. 단 `REPORT_DASHBOARD_STORE`가
+    설정돼 있으면 `_default_store`가 이 함수를 아예 호출하지 않고 로컬 JSONL로
+    직행한다 — 로컬 dev secrets.toml이 있어도 테스트가 격리되게 하는 장치다.
     secrets 파일이 아예 없으면 st.secrets 접근 자체가 예외를 내므로 감싼다.
 
     단, `[auth]`가 설정된 배포 환경에서 Sheets 설정만 없거나 읽히지 않으면
@@ -100,13 +102,20 @@ class ReportRepo:
 
     @staticmethod
     def _default_store() -> Store:
+        """`REPORT_DASHBOARD_STORE`가 설정돼 있으면 secrets.toml 내용과 무관하게
+        무조건 그 경로의 로컬 JSONL을 쓴다 — 테스트가 실물 Google Sheets 쿼터를
+        태우지 않게 하는 유일한 스위치다. 배포 환경에는 이 env var가 없으므로
+        프로덕션 동작(Sheets 우선)은 그대로다.
+        """
+        root = os.environ.get("REPORT_DASHBOARD_STORE")
+        if root:
+            return Store(root=Path(root))
         settings = _sheets_settings()
         if settings is not None:
             service = build_sheets_service(settings["credentials"])
             client = SheetsClient(settings["spreadsheet_id"], service)
             return SheetsStore(client=client, spreadsheet_id=settings["spreadsheet_id"])
-        root = os.environ.get("REPORT_DASHBOARD_STORE")
-        return Store(root=Path(root)) if root else Store()
+        return Store()
 
     # -- 캠페인 ---------------------------------------------------
 
