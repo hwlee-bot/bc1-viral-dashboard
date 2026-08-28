@@ -82,6 +82,10 @@ st.markdown(_STYLE, unsafe_allow_html=True)
 campaigns = repo.campaigns()
 contents = repo.contents()
 metrics = repo.content_metrics()
+# auto_instagram 행은 views=0 관례 sentinel이라(실제 조회수 아님, 스펙 §4.2),
+# 조회수 참고 숫자를 계산하는 모든 자리에서 반드시 제외해야 한다 — 안 그러면
+# 매일 쌓이는 이 행이 사람이 입력한 진짜 조회수를 조용히 덮어써 버린다.
+view_metrics = [m for m in metrics if m.get("source") != "auto_instagram"]
 
 st.markdown(
     f"""
@@ -97,7 +101,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-total_views = sum(m["views"] for m in metrics)
+total_views = sum(m["views"] for m in view_metrics)
 st.markdown(
     f"""
 <div class="vr-sum-metrics">
@@ -120,7 +124,7 @@ if not metrics:
     st.caption("아직 자동 수집 기록이 없다 — 등록·관리자 페이지에서 수동으로 값을 넣을 수 있다.")
 else:
     contents_by_id = {c["content_id"]: c for c in contents}
-    recent = sorted(metrics, key=lambda m: m["captured_at"], reverse=True)[:5]
+    recent = sorted(view_metrics, key=lambda m: m["captured_at"], reverse=True)[:5]
     rows = []
     for metric in recent:
         content = contents_by_id.get(metric["content_id"])

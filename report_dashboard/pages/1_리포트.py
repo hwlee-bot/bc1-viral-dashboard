@@ -681,7 +681,13 @@ def _render_metrics_panel(
     )
     if channel == "instagram":
         if likes_series:
-            st.caption(f"최근 수집: {likes_series[-1][0]}")
+            latest_likes_at = likes_series[-1][0]
+            latest_likes_metric = next(
+                (m for m in metrics if m["captured_at"] == latest_likes_at and m.get("source") == "auto_instagram"),
+                None,
+            )
+            accuracy = latest_likes_metric["accuracy"] if latest_likes_metric else "실측"
+            st.caption(f"정확도: {accuracy} · 최근 수집: {latest_likes_at}")
         else:
             st.caption("아직 수집된 좋아요가 없다.")
     elif metrics:
@@ -815,17 +821,30 @@ _render_keyword_watchlist(keyword_summary, contents_by_id)
 
 st.subheader("콘텐츠별 상세")
 
-# 조회수 높은 순으로 노출한다. 아직 조회수가 0(=수집 전)인 콘텐츠는 맨
-# 아래로 보내되, 그 안에서는 원래 등록 순서를 유지한다(sorted는 안정 정렬).
+
+def _primary_metric_value(content: dict, view_metrics: list[dict], all_metrics: list[dict]) -> int:
+    """카드 정렬·빈 상태 판정에 쓸 대표 지표. 인스타는 조회수를 구조적으로
+    못 모으므로(스펙 §1) 좋아요 최신값을 대신 쓴다 — 안 그러면 좋아요
+    데이터가 있어도 카드가 항상 '데이터 없음'으로 표시되고 맨 아래로
+    밀린다."""
+    if content["channel"] == "instagram":
+        cid = content["content_id"]
+        series = likes_history([m for m in all_metrics if m["content_id"] == cid])
+        return series[-1][1] if series else 0
+    return latest_views(view_metrics, content["content_id"])
+
+
+# 조회수(또는 인스타는 좋아요) 높은 순으로 노출한다. 아직 값이 0(=수집 전)인
+# 콘텐츠는 맨 아래로 보내되, 그 안에서는 원래 등록 순서를 유지한다(sorted는 안정 정렬).
 contents_sorted = sorted(
-    contents, key=lambda c: (latest_views(view_metrics, c["content_id"]) == 0, -latest_views(view_metrics, c["content_id"]))
+    contents, key=lambda c: (_primary_metric_value(c, view_metrics, all_metrics) == 0, -_primary_metric_value(c, view_metrics, all_metrics))
 )
 
 for content in contents_sorted:
     cid = content["content_id"]
-    views = latest_views(view_metrics, cid)
+    primary_value = _primary_metric_value(content, view_metrics, all_metrics)
     with st.container(border=True):
-        _render_card_header(content, is_empty=(views == 0))
+        _render_card_header(content, is_empty=(primary_value == 0))
 
         metrics = sorted((m for m in all_metrics if m["content_id"] == cid), key=lambda m: m["captured_at"])
         content_ranks = [r for r in all_ranks if r["content_id"] == cid]
