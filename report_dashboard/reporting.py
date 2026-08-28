@@ -132,6 +132,24 @@ def rank_history(ranks_for_content: list[dict]) -> list[tuple[str, int]]:
     return [(date, by_date[date]) for date in sorted(by_date.keys())]
 
 
+def likes_history(metrics_for_content: list[dict]) -> list[tuple[str, int]]:
+    """콘텐츠 하나의 좋아요 수 이력을 관측일 오름차순으로 돌려준다.
+
+    auto_instagram 소스 행만 본다 — rank_history와 같은 방어적 설계로,
+    인스타가 아닌 채널이나 조회수만 있는 행이 섞여 들어와도 안전하다.
+    같은 날 행이 여러 개면 리스트에서 더 나중 값을 쓴다(재실행 등 대비).
+    """
+    by_date: dict[str, int] = {}
+    for row in metrics_for_content:
+        if row.get("source") != "auto_instagram":
+            continue
+        likes = row.get("likes_count")
+        if likes is None:
+            continue
+        by_date[row["captured_at"]] = likes
+    return [(date, by_date[date]) for date in sorted(by_date.keys())]
+
+
 def target_progress_pct(current_views: int, target_views: int) -> int:
     if not target_views:
         return 0

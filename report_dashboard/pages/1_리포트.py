@@ -40,7 +40,7 @@ from report_dashboard.auth import require_role
 from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import (
     build_export_markdown, channel_distribution, exposure_counts_by_channel, keyword_rank_summary,
-    latest_rank_row, latest_views, participation_rate, rank_history,
+    latest_rank_row, latest_views, likes_history, participation_rate, rank_history,
 )
 
 # 게이트를 이 파일에서도 호출한다 — app.py의 라우터 게이트에만 의존하면 안 된다.
@@ -365,8 +365,11 @@ def _polyline_length(points: list[tuple[float, float]]) -> float:
     return total
 
 
-def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72) -> str:
-    """실측 조회수 시계열만 그린다 — 데이터 없는 구간에 추세를 지어내지 않는다.
+def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, value_field: str = "views") -> str:
+    """실측 시계열만 그린다 — 데이터 없는 구간에 추세를 지어내지 않는다.
+
+    value_field로 무엇을 그릴지 고른다(기본 조회수). 인스타 카드는 좋아요
+    시계열을 넘긴다(Task 8) — 이 함수 자체는 값의 의미를 모른다.
 
     선 색은 남색(#2b3a67, 지난 구간)에서 앰버(#b8792e, 최근 구간)로 흐르는
     그라디언트 — 승인된 v2 목업(redesign-v2-report.html) 그대로. 은은한
@@ -376,7 +379,7 @@ def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72) -> s
     if not metrics:
         return f'<svg viewBox="0 0 {width} {height}">{gridlines}</svg>'
 
-    views = [m["views"] for m in metrics]
+    views = [m[value_field] for m in metrics]
     vmin, vmax = min(views), max(views)
     pad_top, pad_bottom, pad_x = 8, 14, 20
     n = len(views)
@@ -588,27 +591,62 @@ def _rank_trend_svg(history: list[tuple[str, int]], width: int = 640, height: in
     return f'<svg viewBox="0 0 {width} {height}">{gridlines}{lines_svg}{dots_svg}{values_svg}</svg>'
 
 
-def _render_metrics_panel(metrics: list[dict], latest_rank: dict | None, rank_hist: list[tuple[str, int]]) -> None:
-    """조회수 스파크라인 + 순위 추이 그래프(왼쪽, 세로로 쌓임)와 조회수/참여율
-    뉴모피즘 스탯 카드(오른쪽)를 한 flex row로 묶는다. 하나의 st.markdown
+def _render_metrics_panel(
+    metrics: list[dict], latest_rank: dict | None, rank_hist: list[tuple[str, int]], channel: str,
+) -> None:
+    """조회수(또는 인스타면 좋아요) 스파크라인 + 순위 추이 그래프(왼쪽, 세로로
+    쌓임)와 통계 패널(오른쪽)을 한 flex row로 묶는다. 하나의 st.markdown
     호출이라야 flex의 align-items:stretch로 스탯 카드 높이가 왼쪽 콘텐츠
     (그래프 2개) 전체 높이에 자동으로 맞는다.
 
+    channel="instagram"이면 조회수 자동수집이 불가능하므로(스펙 §1) 주
+    그래프·주 통계를 좋아요로 바꾸고, 사람이 입력해둔 조회수는 두 번째
+    통계 슬롯에 참고용 숫자로만 보여준다(그래프 아님) — 다른 채널은 이
+    분기를 안 타서 기존 동작 그대로다.
+
     현재 순위는 "상위노출 추이" 타이틀 줄에 이어 붙인다 — 정확도 배지는
     빼고 순위·키워드만 보여준다."""
-    if metrics:
-        latest_metric = metrics[-1]
-        views = latest_metric["views"]
-        num_html = f'<div class="vr-stat-num"><b>{views:,}</b><span>조회수</span></div>'
-        rate = participation_rate(views, latest_metric.get("comments_count"))
-        rate_html = (
-            f'<div class="vr-stat-secondary"><b>{rate:.1f}%</b><span>참여율</span></div>'
-            if rate is not None
-            else '<div class="vr-stat-secondary"><b class="empty">—</b><span>참여율</span></div>'
+    if channel == "instagram":
+        likes_series = likes_history(metrics)
+        manual_metrics = sorted(
+            (m for m in metrics if m.get("source") != "auto_instagram"), key=lambda m: m["captured_at"],
         )
+        latest_manual = manual_metrics[-1] if manual_metrics else None
+
+        if likes_series:
+            latest_likes = likes_series[-1][1]
+            num_html = f'<div class="vr-stat-num"><b>{latest_likes:,}</b><span>좋아요</span></div>'
+            chart_svg = _sparkline_svg(
+                [{"likes_count": v} for _, v in likes_series], value_field="likes_count",
+            )
+        else:
+            num_html = '<div class="vr-stat-num empty"><b>—</b><span>좋아요</span></div>'
+            chart_svg = _sparkline_svg([])
+
+        if latest_manual:
+            rate_html = (
+                f'<div class="vr-stat-secondary"><b>{latest_manual["views"]:,}</b><span>조회수(참고)</span></div>'
+            )
+        else:
+            rate_html = '<div class="vr-stat-secondary"><b class="empty">—</b><span>조회수(참고)</span></div>'
+
+        chart_title = "좋아요 추이"
     else:
-        num_html = '<div class="vr-stat-num empty"><b>—</b><span>조회수</span></div>'
-        rate_html = '<div class="vr-stat-secondary"><b class="empty">—</b><span>참여율</span></div>'
+        if metrics:
+            latest_metric = metrics[-1]
+            views = latest_metric["views"]
+            num_html = f'<div class="vr-stat-num"><b>{views:,}</b><span>조회수</span></div>'
+            rate = participation_rate(views, latest_metric.get("comments_count"))
+            rate_html = (
+                f'<div class="vr-stat-secondary"><b>{rate:.1f}%</b><span>참여율</span></div>'
+                if rate is not None
+                else '<div class="vr-stat-secondary"><b class="empty">—</b><span>참여율</span></div>'
+            )
+        else:
+            num_html = '<div class="vr-stat-num empty"><b>—</b><span>조회수</span></div>'
+            rate_html = '<div class="vr-stat-secondary"><b class="empty">—</b><span>참여율</span></div>'
+        chart_svg = _sparkline_svg(metrics)
+        chart_title = "조회수 추이"
 
     # 카드마다 순위 데이터 유무가 달라 카드 높이가 들쭉날쭉해지지 않도록,
     # 순위 정보는 없어도 항상 같은 자리(타이틀 줄)에 자리표시 텍스트로 남긴다.
@@ -622,8 +660,8 @@ def _render_metrics_panel(metrics: list[dict], latest_rank: dict | None, rank_hi
 
     left_blocks = [
         '<div class="vr-chart-box">'
-        '<div class="vr-chart-title">조회수 추이</div>'
-        f'<div class="vr-sparkline">{_sparkline_svg(metrics)}</div>'
+        f'<div class="vr-chart-title">{chart_title}</div>'
+        f'<div class="vr-sparkline">{chart_svg}</div>'
         "</div>",
         '<div class="vr-chart-box">'
         '<div class="vr-chart-title-row"><span class="vr-chart-title">상위노출 추이</span>'
@@ -641,7 +679,12 @@ def _render_metrics_panel(metrics: list[dict], latest_rank: dict | None, rank_hi
         f'<hr class="vr-metrics-divider">',
         unsafe_allow_html=True,
     )
-    if metrics:
+    if channel == "instagram":
+        if likes_series:
+            st.caption(f"최근 수집: {likes_series[-1][0]}")
+        else:
+            st.caption("아직 수집된 좋아요가 없다.")
+    elif metrics:
         latest_metric = metrics[-1]
         st.caption(f"정확도: {latest_metric['accuracy']} · 최근 수집: {latest_metric['captured_at']}")
     else:
@@ -727,6 +770,10 @@ contents = [c for c in repo.contents(campaign_id=campaign_id) if c["channel"] in
 content_ids = {c["content_id"] for c in contents}
 
 all_metrics = [m for m in repo.content_metrics() if m["content_id"] in content_ids]
+# auto_instagram 행은 views=0 관례 sentinel이라(실제 조회수 아님, 스펙 §4.2),
+# 조회수 참고 숫자를 계산하는 모든 자리에서 반드시 제외해야 한다 — 안 그러면
+# 매일 쌓이는 이 행이 사람이 입력한 진짜 조회수를 조용히 덮어써 버린다.
+view_metrics = [m for m in all_metrics if m.get("source") != "auto_instagram"]
 all_ranks = [r for r in repo.keyword_ranks() if r["content_id"] in content_ids]
 all_comments = [c for c in repo.comments() if c["content_id"] in content_ids]
 
@@ -771,18 +818,18 @@ st.subheader("콘텐츠별 상세")
 # 조회수 높은 순으로 노출한다. 아직 조회수가 0(=수집 전)인 콘텐츠는 맨
 # 아래로 보내되, 그 안에서는 원래 등록 순서를 유지한다(sorted는 안정 정렬).
 contents_sorted = sorted(
-    contents, key=lambda c: (latest_views(all_metrics, c["content_id"]) == 0, -latest_views(all_metrics, c["content_id"]))
+    contents, key=lambda c: (latest_views(view_metrics, c["content_id"]) == 0, -latest_views(view_metrics, c["content_id"]))
 )
 
 for content in contents_sorted:
     cid = content["content_id"]
-    views = latest_views(all_metrics, cid)
+    views = latest_views(view_metrics, cid)
     with st.container(border=True):
         _render_card_header(content, is_empty=(views == 0))
 
         metrics = sorted((m for m in all_metrics if m["content_id"] == cid), key=lambda m: m["captured_at"])
         content_ranks = [r for r in all_ranks if r["content_id"] == cid]
-        _render_metrics_panel(metrics, latest_rank_row(all_ranks, cid), rank_history(content_ranks))
+        _render_metrics_panel(metrics, latest_rank_row(all_ranks, cid), rank_history(content_ranks), content["channel"])
 
         content_comments = [c for c in all_comments if c["content_id"] == cid]
         _render_comments(content_comments)
@@ -791,7 +838,7 @@ for content in contents_sorted:
 
 st.subheader("광고주 공유용 내보내기")
 
-export_markdown = build_export_markdown(campaign_label, contents, all_metrics, all_ranks, all_comments)
+export_markdown = build_export_markdown(campaign_label, contents, view_metrics, all_ranks, all_comments)
 st.download_button(
     "리포트 내보내기 (Markdown)",
     data=export_markdown,
