@@ -26,6 +26,7 @@ from report_dashboard.auth import (
     ROLE_TEAM, USERS_TABLE, clear_client_emails_cache, client_emails, require_role,
 )
 from report_dashboard import content_sheet_sync
+from report_dashboard.design_system import inject_base_fonts
 from report_dashboard.repo import ReportRepo
 
 # 게이트를 이 파일에서도 호출한다 — 이유는 1_리포트.py 상단 주석과 같다
@@ -53,6 +54,7 @@ def _label(content: dict) -> str:
 
 repo = ReportRepo()
 
+inject_base_fonts()
 st.markdown(
     """
 <style>

@@ -37,10 +37,12 @@ if _repo_root not in sys.path:
 import streamlit as st
 
 from report_dashboard.auth import require_role
+from report_dashboard.design_system import inject_base_fonts
 from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import (
-    build_export_markdown, channel_distribution, exposure_counts_by_channel, keyword_rank_summary,
-    latest_rank_row, latest_views, likes_history, participation_rate, rank_history,
+    build_export_markdown, channel_distribution, exposure_counts_by_channel, keyword_impact_leaderboard,
+    keyword_rank_summary, keyword_weekly_exposure_counts, keyword_weekly_view_sums, latest_rank_row, latest_views,
+    likes_history, participation_rate, rank_history, week_label,
 )
 
 # 게이트를 이 파일에서도 호출한다 — app.py의 라우터 게이트에만 의존하면 안 된다.
@@ -89,25 +91,43 @@ _STYLE_AND_ICONS = """
   --vr-critical-soft: #fbe8e8;
   --vr-radius: 12px;
   --vr-ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --vr-font-display: "Gothic A1", -apple-system, "Apple SD Gothic Neo", sans-serif;
 }
-@import url('https://fonts.googleapis.com/css2?family=Gothic+A1:wght@700;800;900&display=swap');
 
 /* ---- v2 리뉴얼: 마녀공장 마스터 브랜드 옐로우 앰비언트 헤더 ---- */
 .vr-amb {
-  position: relative; padding: 30px 32px 60px; margin: -1rem -1rem 0;
+  container-type: inline-size; /* 히어로 타이틀 폰트 크기를 뷰포트가 아니라
+    이 카드 자체 폭 기준(cqw)으로 잡기 위해 — 사이드바 유무 등으로 카드
+    실제 폭이 뷰포트와 달라지는 경우에도 항상 카드에 맞게 꽉 찬다. */
+  position: relative; padding: 20px 26px 34px; margin: -1rem -1rem 0;
   background: linear-gradient(135deg, #ffe066 0%, #fbc02d 55%, #f2a30f 100%);
+  overflow: hidden;
 }
+/* 포스터풍 필름 그레인 — 레퍼런스(핀터레스트 "I AM POWERFUL" 포스터류)의
+   질감을 살리려고 기존 5%보다 훨씬 진하게(18%) 올렸다. 평평한 그라디언트가
+   아니라 인쇄물 같은 까끌한 질감이 나야 포스터 느낌이 산다. */
 .vr-amb::after {
   content: ""; position: absolute; inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.18'/%3E%3C/svg%3E");
   mix-blend-mode: overlay; pointer-events: none;
 }
 .vr-amb-top { display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 1; }
-.vr-amb-brand { font-size: 13px; font-weight: 600; color: rgba(30,22,0,0.85); }
+.vr-amb-brand { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(30,22,0,0.75); }
 .vr-amb-brand span { color: #7a4a00; }
-.vr-amb-user { font-size: 11px; color: rgba(30,22,0,0.55); }
-.vr-amb-title { position: relative; z-index: 1; margin-top: 24px; font-size: 26px; font-weight: 700; color: #1e1600; letter-spacing: -0.02em; }
+.vr-amb-user { font-size: 10px; letter-spacing: 0.02em; color: rgba(30,22,0,0.5); }
+/* ---- 잡지 표지풍 히어로 타이틀(Bebas Neue, 2026-09-02 → 왼쪽 정렬·
+   레퍼런스 반영으로 재조정) ----
+   레퍼런스(핀터레스트 "I AM POWERFUL" 포스터)처럼 왼쪽 정렬, 상단에서
+   여백을 두고 아래쪽으로 내려서 앉힌다. text-shadow 두 겹으로 인쇄
+   오프셋(스크린프린트 겹인쇄) 느낌의 입체감을 준다 — 사진이 없는 배경이라
+   레퍼런스의 톤(빨강 위 빨강 잔상)을 그대로 못 쓰는 대신, 같은 잉크색
+   계열의 오프셋 그림자로 같은 "겹쳐 찍힌" 인상을 낸다. */
+.vr-amb-title {
+  position: relative; z-index: 1; margin: 18px 0 -4px; padding: 0;
+  font-family: var(--vr-font-display); font-size: clamp(3.2rem, 21cqw, 8rem);
+  line-height: 0.82; font-weight: 400; letter-spacing: 0.01em;
+  color: #1e1600; text-align: left;
+  text-shadow: 3px 4px 0 rgba(122,74,0,0.22), 8px 10px 18px rgba(30,22,0,0.16);
+}
 
 /* ---- 겹치는 히어로 카드: 도넛 + 상위노출 랭크 ----
    .vr-hero를 직접 여는 div로 쓰지 않는다 — Streamlit은 st.markdown 호출마다
@@ -136,6 +156,21 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-donut-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .vr-donut-legend-num { margin-left: auto; color: var(--vr-ink); font-weight: 700; font-variant-numeric: tabular-nums; }
 .vr-donut-legend-pct { color: var(--vr-ink-muted); font-weight: 500; font-size: 11px; min-width: 34px; text-align: right; }
+
+/* ---- 주간 키워드 파급력: 캠페인 키워드끼리 서로 비교한 리더보드 ---- */
+.vr-kwimpact-list { display:flex; flex-direction:column; gap:12px; margin: 4px 0 8px; }
+.vr-kwimpact-top { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.vr-kwimpact-ordinal { font-family: var(--vr-font-display); font-size:13px; font-weight:800; color:var(--vr-ink-muted); min-width:24px; }
+.vr-kwimpact-item--top .vr-kwimpact-ordinal { color: var(--vr-accent); }
+.vr-kwimpact-keyword { font-size:13px; font-weight:700; color:var(--vr-ink); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vr-kwimpact-delta { flex:none; font-size:11px; font-weight:700; padding:1px 7px; border-radius:999px; font-variant-numeric: tabular-nums; }
+.vr-kwimpact-delta--up { color:var(--vr-good); background:var(--vr-good-soft); }
+.vr-kwimpact-delta--down { color:var(--vr-critical); background:var(--vr-critical-soft); }
+.vr-kwimpact-delta--flat { color:var(--vr-ink-muted); background:var(--vr-page); }
+.vr-kwimpact-delta--new { color:var(--vr-accent); background:var(--vr-accent-soft); }
+.vr-kwimpact-score { flex:none; font-size:12.5px; font-weight:700; color:var(--vr-ink); font-variant-numeric: tabular-nums; }
+.vr-kwimpact-track { position:relative; height:8px; background:var(--vr-accent-soft); border-radius:999px; overflow:hidden; }
+.vr-kwimpact-fill { position:absolute; inset:0; border-radius:999px; background:linear-gradient(90deg, var(--vr-accent), var(--vr-accent-bright)); }
 
 /* ---- 캠페인 키워드 순위: 탭당 전체 목록 ---- */
 /* 키워드 카드 자체가 한 줄에 하나씩(st.markdown 호출마다 별도 블록) 쌓이던 걸
@@ -170,11 +205,6 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-stat-secondary b.empty { color: #c7c2b6; font-size: 22px; }
 .vr-stat-secondary span { display: block; font-size: 11px; color: var(--vr-ink-muted); font-weight: 600; margin-top: 2px; }
 
-[data-testid="stHeading"] h1, [data-testid="stHeading"] h2, [data-testid="stHeading"] h3 {
-  font-family: var(--vr-font-display) !important;
-  font-weight: 800 !important;
-  letter-spacing: -0.01em;
-}
 [data-testid="stCaptionContainer"] p { color: var(--vr-ink-muted) !important; }
 
 /* -- 채널별 상위노출 랭크 리스트 --------------------------------------- */
@@ -232,7 +262,11 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
    .vr-card-stats 높이가 왼쪽 .vr-metrics-charts(그래프 2개)의 실제 콘텐츠
    높이에 자동으로 맞춰진다. 폭도 같은 flex 컬럼을 공유하므로 위 스파크라인과
    아래 순위 추이 그래프가 항상 같은 렌더 폭을 갖는다. */
-.vr-metrics-panel { display:flex; align-items:stretch; gap:20px; margin: 0 2px 0; }
+/* position+z-index로 카드 전체 링크 오버레이(.vr-card-link, z-index:1) 위로
+   끌어올린다 — 안 그러면 그래프 위 호버 포인트(.vr-pt-hit)가 그 투명 <a>에
+   가려져서 커서를 올려도 절대 안 잡힌다(실측으로 발견, 2026-09-02). 이
+   영역 안에서는 카드 링크 클릭(원문 열기)보다 그래프 호버가 우선한다. */
+.vr-metrics-panel { position:relative; z-index:2; display:flex; align-items:stretch; gap:20px; margin: 0 2px 0; }
 .vr-metrics-charts { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; gap:12px; }
 .vr-chart-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
 .vr-chart-title { font-size:11px; font-weight:700; color:var(--vr-ink-2); }
@@ -247,6 +281,15 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 }
 .vr-sparkline svg, .vr-rank-trend svg { display:block; width:100%; height:auto; aspect-ratio: 640 / 72; }
 .vr-gridline { stroke: var(--vr-hairline); stroke-width:1; }
+/* 일별 데이터포인트 호버 라벨(조회수/좋아요·상위노출 추이 그래프 공용) — JS
+   없이 CSS만으로: 점마다 투명 히트서클을 크게 깔고, 그 위에 커서를 올리면
+   숨어있던 라벨(값 텍스트 + 배경 pill)이 나타난다. 라벨을 늘 켜두면
+   데이터가 많을 때 숫자가 빽빽해 보여서(팀장님 피드백) 기본은 숨김. */
+.vr-pt-hit { fill: transparent; }
+.vr-pt-label { opacity: 0; transition: opacity 0.12s var(--vr-ease); pointer-events: none; }
+.vr-pt:hover .vr-pt-label { opacity: 1; }
+.vr-pt-label-bg { fill: #1c1a16; opacity: 0.88; }
+.vr-pt-label-text { font-size: 10px; font-weight: 700; fill: #fff; text-anchor: middle; dominant-baseline: middle; font-variant-numeric: tabular-nums; }
 /* 뉴모피즘 "카드 속 카드" — 배경이 페이지톤(--vr-page)에 가깝고 그림자가
    낮은 채도라 뉴모피즘의 이중 그림자(밝음/어두움)가 잘 먹는다. 글래스모피즘은
    블러로 비칠 화려한 배경이 이 자리엔 없어서(흰 카드 위 흰 여백) 대신 골랐다.
@@ -269,7 +312,6 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-rank-badge { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:20px; padding:0 5px; background:var(--vr-accent-soft); color:var(--vr-accent); font-size:11px; font-weight:700; border-radius:6px; font-variant-numeric: tabular-nums; }
 .vr-rank-trend-miss { fill:var(--vr-surface); stroke:var(--vr-ink-muted); stroke-width:1.5; }
 .vr-rank-trend-sep { stroke:var(--vr-hairline); stroke-width:1; stroke-dasharray:3 3; }
-.vr-rank-trend-value { font-size:10px; font-weight:700; fill:var(--vr-ink-2); text-anchor:middle; }
 
 /* -- 댓글 -------------------------------------------------------------- */
 .vr-comments { display:flex; flex-direction:column; gap:5px; margin: 4px 2px 2px; }
@@ -351,6 +393,7 @@ div[data-testid="stDownloadButton"] button:hover { border-color: var(--vr-accent
 
 
 def _inject_design_system() -> None:
+    inject_base_fonts()
     st.markdown(_STYLE_AND_ICONS, unsafe_allow_html=True)
 
 
@@ -365,6 +408,26 @@ def _polyline_length(points: list[tuple[float, float]]) -> float:
     return total
 
 
+def _hover_point_group(x: float, y: float, label: str, dot_svg: str, *, height: float) -> str:
+    """호버하면 라벨(값)이 뜨는 데이터포인트 하나 — 조회수·좋아요 스파크라인과
+    상위노출 추이 그래프가 공유하는 조각. 실제 마커(dot_svg)는 항상 그려진
+    상태로 두고, 그 위에 투명 히트서클(반지름 12 — 실제 점보다 훨씬 커서
+    커서를 정확히 점 위에 안 올려도 잡힌다)만 얹어 호버 대상을 넓힌다.
+    라벨은 배경 pill 위에 그려서 선·그리드 위에서도 읽힌다. 위쪽 여백이
+    모자라면(그래프 맨 위 근처 점) 라벨을 점 아래로 내려서 뷰박스 밖으로
+    잘리지 않게 한다."""
+    label_y = y - 14 if y - 14 > 10 else y + 20
+    pill_w = max(24, len(label) * 6.5 + 10)
+    return (
+        f'<g class="vr-pt">{dot_svg}'
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="12" class="vr-pt-hit"/>'
+        f'<g class="vr-pt-label" transform="translate({x:.1f},{label_y:.1f})">'
+        f'<rect x="{-pill_w / 2:.1f}" y="-13" width="{pill_w:.1f}" height="17" rx="5" class="vr-pt-label-bg"/>'
+        f'<text x="0" y="1" class="vr-pt-label-text">{_esc(label)}</text>'
+        f"</g></g>"
+    )
+
+
 def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, value_field: str = "views") -> str:
     """실측 시계열만 그린다 — 데이터 없는 구간에 추세를 지어내지 않는다.
 
@@ -374,6 +437,10 @@ def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, valu
     선 색은 남색(#2b3a67, 지난 구간)에서 앰버(#b8792e, 최근 구간)로 흐르는
     그라디언트 — 승인된 v2 목업(redesign-v2-report.html) 그대로. 은은한
     글로우 언더레이 한 번 더 그려서 흰 배경에서도 살짝 번지는 느낌만 준다.
+
+    데이터포인트마다 호버하면 그날 값이 뜬다(팀장님 요청, 2026-09-02) —
+    라벨을 항상 켜두면 콘텐츠가 오래될수록(포인트가 많아질수록) 숫자가
+    빽빽해 보이므로 기본은 숨김, 커서를 올린 지점만 보여준다.
     """
     gridlines = f'<line x1="0" y1="24" x2="{width}" y2="24" class="vr-gridline"/><line x1="0" y1="48" x2="{width}" y2="48" class="vr-gridline"/>'
     if not metrics:
@@ -394,11 +461,19 @@ def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, valu
         return (height - pad_bottom) - frac * (height - pad_bottom - pad_top)
 
     points = [(_x(i), _y(v)) for i, v in enumerate(views)]
-    lastx, lasty = points[-1]
-    dot = f'<circle cx="{lastx:.1f}" cy="{lasty:.1f}" r="5" fill="#b8792e" stroke="#fff" stroke-width="2.5"/>'
+
+    def _dot_svg(i: int, x: float, y: float) -> str:
+        if i == n - 1:
+            return f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#b8792e" stroke="#fff" stroke-width="2.5"/>'
+        return f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="#fff" stroke="#b8792e" stroke-width="2"/>'
+
+    points_svg = "".join(
+        _hover_point_group(x, y, f"{v:,}", _dot_svg(i, x, y), height=height)
+        for i, (v, (x, y)) in enumerate(zip(views, points))
+    )
 
     if n == 1:
-        return f'<svg viewBox="0 0 {width} {height}">{gridlines}{dot}</svg>'
+        return f'<svg viewBox="0 0 {width} {height}">{gridlines}{points_svg}</svg>'
 
     poly = " ".join(f"{px:.1f},{py:.1f}" for px, py in points)
     draw_len = _polyline_length(points)
@@ -408,7 +483,7 @@ def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, valu
         f'<polyline points="{poly}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="6" '
         f'stroke-linecap="round" stroke-linejoin="round" opacity="0.16" filter="url(#vr-glow-v2)" {draw_attrs}/>'
         f'<polyline points="{poly}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="2.5" '
-        f'stroke-linecap="round" stroke-linejoin="round" {draw_attrs}/>{dot}</svg>'
+        f'stroke-linecap="round" stroke-linejoin="round" {draw_attrs}/>{points_svg}</svg>'
     )
 
 
@@ -572,23 +647,22 @@ def _rank_trend_svg(history: list[tuple[str, int]], width: int = 640, height: in
         return glow + line
 
     lines_svg = "".join(_polyline(seg) for seg in segments if len(seg) >= 2)
-    dots_svg = "".join(
-        (
-            f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" class="vr-rank-trend-miss"/>'
-            if rank == 0
-            else f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="#6da7ec" stroke="#fff" stroke-width="2"/>'
+    # 값은 항상 켜진 라벨 대신 호버로만 보여준다(조회수/좋아요 그래프와 통일,
+    # 팀장님 요청 2026-09-02) — 마커(dot)는 그대로 항상 보이고, 그 위에 커서를
+    # 올리면 그날 순위(또는 "미노출")가 뜬다.
+    points_svg = "".join(
+        _hover_point_group(
+            px, py, "미노출" if rank == 0 else f"{rank}위",
+            (
+                f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" class="vr-rank-trend-miss"/>'
+                if rank == 0
+                else f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="#6da7ec" stroke="#fff" stroke-width="2"/>'
+            ),
+            height=height,
         )
         for (_, rank), (px, py) in zip(history, points)
     )
-    # 점 위에 라벨을 놓는다 — 위쪽 여백이 모자라면(맨 위 근처 점) 아래로 내려서
-    # 뷰박스 밖으로 잘리지 않게 한다.
-    values_svg = "".join(
-        f'<text x="{px:.1f}" y="{(py - 10 if py - 10 > 8 else py + 16):.1f}" class="vr-rank-trend-value">'
-        + ("미노출" if rank == 0 else f"{rank}위")
-        + "</text>"
-        for (_, rank), (px, py) in zip(history, points)
-    )
-    return f'<svg viewBox="0 0 {width} {height}">{gridlines}{lines_svg}{dots_svg}{values_svg}</svg>'
+    return f'<svg viewBox="0 0 {width} {height}">{gridlines}{lines_svg}{points_svg}</svg>'
 
 
 def _render_metrics_panel(
@@ -711,6 +785,49 @@ def _render_comments(content_comments: list[dict]) -> None:
     st.markdown(f'<div class="vr-comments">{"".join(lines)}</div>', unsafe_allow_html=True)
 
 
+def _render_keyword_impact_leaderboard(week: str | None, rows: list[dict], score_unit: str) -> None:
+    """캠페인 키워드끼리 서로 비교한, 가장 최근 주 파급력 랭킹(2026-09-02 신규).
+
+    "채널별 상위노출" 막대 리스트(_render_exposure_rank_list)와 같은 시각
+    언어(순위·막대·수치)를 쓰되, 지난주 대비 순위 변동(▲▼) 배지를 더한다 —
+    이 섹션의 핵심 질문이 "이 키워드가 지난주보다 잘 되고 있나"라서.
+    """
+    if week is None:
+        st.caption("아직 주간 집계를 낼 만큼 키워드 순위 데이터가 쌓이지 않았다.")
+        return
+    if not rows:
+        st.caption(f"{week_label(week)} 주 — 파급력이 잡힌 키워드가 아직 없다.")
+        return
+
+    total = sum(row["score"] for row in rows) or 1
+    items = []
+    for row in rows:
+        pct = round(row["score"] / total * 100)
+        delta = row["delta"]
+        if delta is None:
+            delta_html = '<span class="vr-kwimpact-delta vr-kwimpact-delta--new">NEW</span>'
+        elif delta > 0:
+            delta_html = f'<span class="vr-kwimpact-delta vr-kwimpact-delta--up">▲{delta}</span>'
+        elif delta < 0:
+            delta_html = f'<span class="vr-kwimpact-delta vr-kwimpact-delta--down">▼{abs(delta)}</span>'
+        else:
+            delta_html = '<span class="vr-kwimpact-delta vr-kwimpact-delta--flat">—</span>'
+        top_cls = " vr-kwimpact-item--top" if row["rank"] == 1 else ""
+        items.append(
+            f'<div class="vr-kwimpact-item{top_cls}">'
+            f'<div class="vr-kwimpact-top">'
+            f'<span class="vr-kwimpact-ordinal">{row["rank"]}위</span>'
+            f'<span class="vr-kwimpact-keyword">"{_esc(row["keyword"])}"</span>'
+            f"{delta_html}"
+            f'<span class="vr-kwimpact-score">{row["score"]:,}{score_unit}</span>'
+            f"</div>"
+            f'<div class="vr-kwimpact-track"><div class="vr-kwimpact-fill" style="width:{pct}%"></div></div>'
+            f"</div>"
+        )
+    st.caption(f"{week_label(week)} 주 기준 · 지난주 대비 변동")
+    st.markdown(f'<div class="vr-kwimpact-list">{"".join(items)}</div>', unsafe_allow_html=True)
+
+
 def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
     if not summary:
         st.caption("등록된 추적 키워드가 없다.")
@@ -756,7 +873,7 @@ st.markdown(
     f'<div class="vr-amb"><div class="vr-amb-top">'
     f'<div class="vr-amb-brand">바이럴 <span>리포팅</span></div>'
     f'<div class="vr-amb-user">{_esc(email)}</div>'
-    f'</div><div class="vr-amb-title">리포트 대시보드</div></div>',
+    f'</div><div class="vr-amb-title">REPORT DASHBOARD</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -802,17 +919,37 @@ with st.container(border=True):
     exposure_counts = exposure_counts_by_channel(contents, all_ranks)
     _render_exposure_rank_list(exposure_counts)
 
-# -- 캠페인 키워드 순위 --------------------------------------------------
-
-st.subheader("캠페인 키워드 순위")
-
 # keyword_ranks()는 캠페인으로 필터링하지 않는다(스키마에 campaign_id가 없다) —
 # 이 캠페인에 등록된 키워드 문자열로만 걸러낸다. 알려진 한계: 다른 캠페인이
 # 우연히 똑같은 키워드 문자열을 쓰면 그 결과도 섞여 보인다(design.md §3.2 참고,
-# 스키마 변경 없이 가기로 한 결정).
+# 스키마 변경 없이 가기로 한 결정). 아래 두 섹션(주간 파급력·상세 목록)이 같이 쓴다.
 target_keywords = list(dict.fromkeys(k["keyword"] for k in repo.target_keywords(campaign_id=campaign_id)))
 keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
 contents_by_id = {c["content_id"]: c for c in repo.contents(campaign_id=campaign_id)}
+
+# -- 주간 키워드 파급력 (캠페인 키워드끼리 서로 비교, 2026-09-02 신규) -------
+
+st.subheader("주간 키워드 파급력")
+
+_IMPACT_BASIS_OPTIONS = {"상위노출 콘텐츠 수": "exposure_count", "매치 콘텐츠 조회수 합": "view_sum"}
+basis_choice = st.radio(
+    "파급력 기준", options=list(_IMPACT_BASIS_OPTIONS.keys()), horizontal=True, key="keyword_impact_basis",
+)
+impact_basis = _IMPACT_BASIS_OPTIONS[basis_choice]
+
+if impact_basis == "exposure_count":
+    weekly_scores = keyword_weekly_exposure_counts(keyword_ranks_for_campaign, target_keywords)
+    score_unit = "건"
+else:
+    weekly_scores = keyword_weekly_view_sums(keyword_ranks_for_campaign, view_metrics, target_keywords)
+    score_unit = "회"
+
+impact_week, impact_rows = keyword_impact_leaderboard(weekly_scores)
+_render_keyword_impact_leaderboard(impact_week, impact_rows, score_unit)
+
+# -- 캠페인 키워드 순위 --------------------------------------------------
+
+st.subheader("캠페인 키워드 순위")
 
 keyword_summary = keyword_rank_summary(keyword_ranks_for_campaign, target_keywords)
 _render_keyword_watchlist(keyword_summary, contents_by_id)

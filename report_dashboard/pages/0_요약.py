@@ -17,6 +17,7 @@ if _repo_root not in sys.path:
 import streamlit as st
 
 from report_dashboard.auth import require_role
+from report_dashboard.design_system import inject_base_fonts
 from report_dashboard.reporting import channel_distribution
 from report_dashboard.repo import ReportRepo
 
@@ -77,6 +78,7 @@ _STYLE = """
 </style>
 """
 
+inject_base_fonts()
 st.markdown(_STYLE, unsafe_allow_html=True)
 
 campaigns = repo.campaigns()
