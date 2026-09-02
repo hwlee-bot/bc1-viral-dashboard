@@ -90,6 +90,20 @@ def keyword_rank_summary(ranks: list[dict], keywords: list[str]) -> dict:
     return summary
 
 
+def latest_keyword_serp(serp_rows: list[dict], keyword: str, search_tab: str) -> list[dict]:
+    """이 키워드·탭의 가장 최근 SERP 스냅샷(경쟁 게시글 포함 상위 N건)을
+    순위 오름차순으로 돌려준다. keyword_rank_summary와 같은 원칙 — "가장 최근
+    수집 배치"는 captured_at 문자열이 가장 큰 값과 일치하는 행 전부다(같은
+    실행 안에서는 collect_keyword_serp가 모든 행에 같은 now를 쓴다).
+    아직 한 번도 수집 안 됐으면(이 키워드·탭 행이 아예 없으면) 빈 리스트."""
+    rows = [r for r in serp_rows if r["keyword"] == keyword and r["search_tab"] == search_tab]
+    if not rows:
+        return []
+    latest_captured_at = max(r["captured_at"] for r in rows)
+    latest_batch = [r for r in rows if r["captured_at"] == latest_captured_at]
+    return sorted(latest_batch, key=lambda r: r["rank"])
+
+
 def exposure_counts_by_channel(contents: list[dict], ranks: list[dict]) -> dict:
     counts = defaultdict(int)
     for content in contents:

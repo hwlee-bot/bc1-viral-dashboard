@@ -21,7 +21,7 @@ import streamlit as st
 
 from report_dashboard.design_system import inject_base_fonts
 from report_dashboard.reporting import (
-    TOP_EXPOSURE_RANK, build_export_markdown, latest_views, likes_history, participation_rate, week_label,
+    build_export_markdown, latest_keyword_serp, latest_views, likes_history, participation_rate, week_label,
 )
 
 CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
@@ -220,23 +220,32 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-rank-unit { font-size:11px; color:var(--vr-ink-muted); }
 .vr-rank-share { font-size:10.5px; color:var(--vr-ink-muted); text-align:right; margin-top:2px; grid-column:4; font-variant-numeric: tabular-nums; }
 
-/* -- 상위노출 콘텐츠 리스트(상위노출 탭 메인, 2026-09-02 신규) ---------- */
-.vr-explist { display:flex; flex-direction:column; gap:2px; }
-.vr-explist-row {
-  display:grid; grid-template-columns: 40px 26px 1fr auto; align-items:center; gap:12px;
-  padding:11px 10px; border-radius:10px; text-decoration:none; color:inherit;
+/* -- 키워드 SERP 리스트(상위노출 탭 메인, 2026-09-02 콘텐츠 중심→키워드
+   중심 전환) — 키워드를 검색하면 실제로 뭐가 노출되는지(경쟁 게시글 포함)를
+   순위 오름차순으로 보여주고, 그중 우리 콘텐츠(.vr-serp-row--ours)만 색을
+   다르게 강조한다. */
+.vr-serp-panel { margin-bottom: 20px; }
+.vr-serp-panel:last-child { margin-bottom: 0; }
+.vr-serp-head { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
+.vr-serp-keyword { font-size:13.5px; font-weight:700; color:var(--vr-ink); }
+.vr-serp-tab { font-size:11px; color:var(--vr-ink-muted); font-weight:600; }
+.vr-serp-list { display:flex; flex-direction:column; gap:2px; }
+.vr-serp-row {
+  display:grid; grid-template-columns: 34px 1fr; align-items:center; gap:10px;
+  padding:9px 10px; border-radius:10px; text-decoration:none; color:inherit;
   transition: background 0.15s var(--vr-ease);
 }
-.vr-explist-row:hover { background: var(--vr-page); }
-.vr-explist-row--top { background: var(--vr-accent-soft); }
-.vr-explist-row--top:hover { background: var(--vr-accent-soft); }
-.vr-explist-title { font-size:13.5px; font-weight:700; color:var(--vr-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-.vr-explist-keyword { font-size:11.5px; color:var(--vr-ink-muted); font-weight:500; white-space:nowrap; }
-.vr-explist-date { font-size:11px; color:var(--vr-ink-muted); font-variant-numeric: tabular-nums; white-space:nowrap; }
-@media (max-width: 640px) {
-  .vr-explist-row { grid-template-columns: 40px 26px 1fr; }
-  .vr-explist-keyword, .vr-explist-date { display:none; }
-}
+.vr-serp-row:hover { background: var(--vr-page); }
+.vr-serp-row--ours { background: var(--vr-accent-soft); border-left:3px solid var(--vr-accent); padding-left:7px; }
+.vr-serp-row--ours:hover { background: var(--vr-accent-soft); }
+.vr-serp-rank { font-family: var(--vr-font-display); font-size:12.5px; font-weight:800; color:var(--vr-ink-muted); text-align:center; font-variant-numeric: tabular-nums; }
+.vr-serp-row--ours .vr-serp-rank { color: var(--vr-accent); }
+.vr-serp-title { font-size:13px; color:var(--vr-ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.vr-serp-row--ours .vr-serp-title { font-weight:700; color:var(--vr-ink); }
+.vr-serp-empty { color:var(--vr-ink-muted); font-size:12px; padding:4px 0; }
+/* 순위는 잡혔는데(collect_campaign_ranks가 매치) 상위 N건 SERP 리스트엔
+   없을 때(예: 18위) 쓰는 텍스트 폴백 — 팀장님 요청 그대로("OOO 몇위"). */
+.vr-serp-note { font-size:12px; color:var(--vr-accent); font-weight:600; padding:6px 2px 0; }
 
 /* -- 콘텐츠 카드: marker로 이 카드의 stVerticalBlock만 스코프해서 강화 ----
    목업(redesign-v2-report.html) 그대로: 흰 배경 + 헤어라인 보더 + 채널별
@@ -658,82 +667,67 @@ def _render_exposure_rank_list(exposure_counts: dict) -> None:
     st.markdown(f'<div class="vr-rank-list">{"".join(rows)}</div>', unsafe_allow_html=True)
 
 
-def _render_exposure_content_list(contents_by_id: dict, ranks: list[dict], contents: list[dict] | None = None) -> None:
-    """상위노출(네이버 1p 진입, rank<=10) 콘텐츠를 순위 오름차순 한 줄씩 —
-    상위노출 탭 신설(2026-09-02)로 만든 것. 예전엔 이 정보가 채널별 집계
-    막대(_render_exposure_rank_list, 지금은 우측 인사이트 패널로 이동)와
-    키워드별 카드 그리드에 흩어져 있었는데, "콘텐츠 하나하나가 상위노출
-    됐는지"를 한눈에 보려면 콘텐츠 단위 리스트가 필요해서 새로 뺐다.
-    콘텐츠 제목을 굵게 강조하고(레퍼런스처럼 "무엇이 노출됐나"가 먼저 보이게),
-    1위 행은 .vr-explist-row--top으로 한 번 더 강조한다.
+_SERP_TABS = ("블로그API", "카페API")
 
-    상위노출로 잡히는 콘텐츠가 하나도 없으면(캠페인 초반 등) 화면이 통째로
-    비어 보이면 안 된다 — 팀장님 확인(2026-09-02): 등록된 콘텐츠 목록 자체는
-    그대로 보여주고, 그중 아직 순위가 없다는 걸 배지("—")로만 표시한다.
-    이 폴백은 contents가 넘어왔을 때만 동작한다(호출부가 안 넘기면 기존처럼
-    안내 문구만 보여준다)."""
-    rows = [r for r in ranks if r.get("rank") is not None and r["rank"] <= TOP_EXPOSURE_RANK]
-    rows_sorted = sorted(rows, key=lambda r: r["rank"])
-    if not rows_sorted:
-        st.caption("아직 네이버 상위노출(1p)에 든 콘텐츠가 없다 — 등록된 콘텐츠는 다음과 같다.")
-        if not contents:
-            return
-        fallback_items = []
-        for content in contents:
-            # 실제 운영 데이터(시트 동기화·수동 등록이 뒤섞인)엔 필드가 빠지거나
-            # 타입이 어긋난 행이 섞여 있을 수 있다 — 위 실측 분기(아래)는 항상
-            # contents_by_id.get()으로 조회해서 None이면 건너뛰지만, 이 폴백은
-            # contents를 직접 순회하는 이 페이지 최초의 자리라 같은 방어가
-            # 없었다. 콘텐츠 한 건이 어떻게 깨져 있든(레코드 자체가 None,
-            # channel이 문자열이 아님 등) 그 한 건 때문에 페이지 전체가
-            # TypeError로 죽으면 안 된다 — 실측 장애(2026-09-02, 등록 콘텐츠
-            # 24건·상위노출 0건 상태에서 재현) 이후 그 행만 건너뛰도록 방어한다.
-            try:
-                url = content.get("url") if isinstance(content, dict) else None
-                if not url:
-                    continue
-                channel = content.get("channel") or "community"
-                icon = _CHANNEL_ICON.get(channel, "community")
-                title = _esc(content.get("title") or url)
-                release = _esc(content.get("release_at") or "미정")
-                fallback_items.append(
-                    f'<a class="vr-explist-row" href="{_esc(url)}" target="_blank" rel="noopener noreferrer">'
-                    f'<span class="vr-rank-badge">—</span>'
-                    f'<span class="vr-channel-badge"><svg><use href="#vr-logo-{icon}"/></svg></span>'
-                    f'<span class="vr-explist-title">{title}</span>'
-                    f'<span class="vr-explist-keyword">{_esc(channel)}</span>'
-                    f'<span class="vr-explist-date">릴리즈 {release}</span>'
-                    f"</a>"
-                )
-            except Exception:
-                # 정확히 어떤 필드가 어떤 식으로 깨졌는지 실측 데이터를 직접
-                # 못 본 상태에서 재현했다 — 원인을 특정 예외 타입으로
-                # 단정하지 않고, 이 폴백 루프에서만은 어떤 예외든 그 행 하나만
-                # 건너뛰고 나머지 콘텐츠는 정상 표시되게 넓게 잡는다.
-                continue
-        if not fallback_items:
-            return
-        st.markdown(f'<div class="vr-explist">{"".join(fallback_items)}</div>', unsafe_allow_html=True)
+
+def _render_keyword_serp_section(
+    target_keywords: list[str], serp_rows: list[dict], ranks_for_campaign: list[dict], contents_by_id: dict,
+) -> None:
+    """추적 키워드마다 "이 키워드를 검색하면 실제로 뭐가 노출되는지"(경쟁
+    게시글 포함 상위 N건)를 순위대로 보여주고, 그중 우리 콘텐츠는 색을
+    다르게 강조한다(2026-09-02, 콘텐츠 중심 목록 → 키워드 중심 SERP로 전환 —
+    팀장님 요청: 키워드별로 검색결과를 리스트업하고 우리 콘텐츠만 강조,
+    순위는 잡히는데 리스트엔 없으면 "OOO 몇위" 텍스트로).
+
+    블로그API·카페API 두 탭만 돈다 — VIEW는 GitHub Actions IP가 네이버
+    WAF에 막혀 실서비스에서 SERP 스냅샷 자체가 안 만들어진다
+    (scripts/collect_naver_ranks.py::collect_keyword_serp 참고).
+    """
+    if not target_keywords:
+        st.caption("추적 중인 키워드가 없다.")
         return
 
-    items = []
-    for row in rows_sorted:
-        content = contents_by_id.get(row["content_id"])
-        if content is None:
-            continue
-        icon = _CHANNEL_ICON.get(content["channel"], "community")
-        title = _esc(content.get("title") or content["url"])
-        top_cls = " vr-explist-row--top" if row["rank"] == 1 else ""
-        items.append(
-            f'<a class="vr-explist-row{top_cls}" href="{_esc(content["url"])}" target="_blank" rel="noopener noreferrer">'
-            f'<span class="vr-rank-badge">{row["rank"]}위</span>'
-            f'<span class="vr-channel-badge"><svg><use href="#vr-logo-{icon}"/></svg></span>'
-            f'<span class="vr-explist-title">{title}</span>'
-            f'<span class="vr-explist-keyword">"{_esc(row["keyword"])}" · {_esc(row.get("search_tab") or "")}</span>'
-            f'<span class="vr-explist-date">{_esc(row["captured_at"])}</span>'
-            f"</a>"
-        )
-    st.markdown(f'<div class="vr-explist">{"".join(items)}</div>', unsafe_allow_html=True)
+    for keyword in target_keywords:
+        for tab in _SERP_TABS:
+            rows = latest_keyword_serp(serp_rows, keyword, tab)
+
+            if rows:
+                row_items = []
+                for row in rows:
+                    ours_cls = " vr-serp-row--ours" if row["content_id"] else ""
+                    title = _esc(row.get("title") or row["url"])
+                    row_items.append(
+                        f'<a class="vr-serp-row{ours_cls}" href="{_esc(row["url"])}" target="_blank" rel="noopener noreferrer">'
+                        f'<span class="vr-serp-rank">{row["rank"]}위</span>'
+                        f'<span class="vr-serp-title">{title}</span>'
+                        f"</a>"
+                    )
+                list_html = f'<div class="vr-serp-list">{"".join(row_items)}</div>'
+            else:
+                list_html = '<div class="vr-serp-empty">아직 수집 전이다.</div>'
+
+            # 순위는 잡혔는데(collect_campaign_ranks가 매치) 위 SERP 리스트
+            # 안에는 없는 우리 콘텐츠(예: 18위 — 상위 10건 스냅샷 밖) 전부를
+            # 텍스트 한 줄씩으로 덧붙인다. 같은 키워드·탭에 우리 콘텐츠가
+            # 여러 개 매치될 수도 있어 첫 건만 보지 않는다.
+            visible_content_ids = {row["content_id"] for row in rows if row["content_id"]}
+            our_matches = [
+                r for r in ranks_for_campaign
+                if r["keyword"] == keyword and r["search_tab"] == tab
+                and r.get("content_id") and r["content_id"] not in visible_content_ids
+            ]
+            note_html = "".join(
+                f'<div class="vr-serp-note">"{_esc((contents_by_id.get(r["content_id"]) or {}).get("title") or r["content_id"])}" {r["rank"]}위</div>'
+                for r in our_matches
+            )
+
+            st.markdown(
+                f'<div class="vr-serp-panel"><div class="vr-serp-head">'
+                f'<span class="vr-serp-keyword">"{_esc(keyword)}"</span>'
+                f'<span class="vr-serp-tab">{_esc(tab)}</span></div>'
+                f"{list_html}{note_html}</div>",
+                unsafe_allow_html=True,
+            )
 
 
 def _render_card_header(content: dict, *, is_empty: bool = False) -> None:
@@ -1157,7 +1151,8 @@ def load_campaign_context(repo) -> dict:
 
     반환: campaign_label/campaign_id/contents/content_ids/all_metrics/
     view_metrics/all_ranks/all_comments/target_keywords/
-    keyword_ranks_for_campaign/contents_by_id 키를 가진 dict."""
+    keyword_ranks_for_campaign/keyword_serp_for_campaign/contents_by_id
+    키를 가진 dict."""
     campaigns = repo.campaigns()
     campaign_labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
 
@@ -1204,6 +1199,8 @@ def load_campaign_context(repo) -> dict:
     # 스키마 변경 없이 가기로 한 결정).
     target_keywords = list(dict.fromkeys(k["keyword"] for k in repo.target_keywords(campaign_id=campaign_id)))
     keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
+    # 같은 이유(스키마에 campaign_id 없음)로 SERP 스냅샷도 키워드 문자열로만 거른다.
+    keyword_serp_for_campaign = [r for r in repo.keyword_serp() if r["keyword"] in target_keywords]
     contents_by_id = {c["content_id"]: c for c in repo.contents(campaign_id=campaign_id)}
 
     return {
@@ -1213,5 +1210,6 @@ def load_campaign_context(repo) -> dict:
         "all_ranks": all_ranks, "all_comments": all_comments,
         "target_keywords": target_keywords,
         "keyword_ranks_for_campaign": keyword_ranks_for_campaign,
+        "keyword_serp_for_campaign": keyword_serp_for_campaign,
         "contents_by_id": contents_by_id,
     }

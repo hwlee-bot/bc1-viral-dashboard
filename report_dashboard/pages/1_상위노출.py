@@ -24,8 +24,8 @@ import streamlit as st
 
 from report_dashboard.auth import require_role
 from report_dashboard.report_common import (
-    _render_channel_donut, _render_exposure_content_list, _render_exposure_rank_list,
-    _render_keyword_impact_leaderboard, _render_keyword_watchlist, _render_stat_row, load_campaign_context,
+    _render_channel_donut, _render_exposure_rank_list, _render_keyword_impact_leaderboard,
+    _render_keyword_serp_section, _render_keyword_watchlist, _render_stat_row, load_campaign_context,
     render_campaign_header,
 )
 from report_dashboard.repo import ReportRepo
@@ -54,6 +54,7 @@ view_metrics = ctx["view_metrics"]
 all_ranks = ctx["all_ranks"]
 target_keywords = ctx["target_keywords"]
 keyword_ranks_for_campaign = ctx["keyword_ranks_for_campaign"]
+keyword_serp_for_campaign = ctx["keyword_serp_for_campaign"]
 contents_by_id = ctx["contents_by_id"]
 
 _IMPACT_BASIS_OPTIONS = {"상위노출 콘텐츠 수": "exposure_count", "매치 콘텐츠 조회수 합": "view_sum"}
@@ -91,7 +92,7 @@ _render_stat_row(
 exp_left, exp_right = st.columns([2, 1], gap="large")
 with exp_left:
     st.subheader("상위노출 콘텐츠")
-    _render_exposure_content_list(contents_by_id, all_ranks, contents)
+    _render_keyword_serp_section(target_keywords, keyword_serp_for_campaign, keyword_ranks_for_campaign, contents_by_id)
 with exp_right:
     st.subheader("채널 현황")
     with st.container(border=True):

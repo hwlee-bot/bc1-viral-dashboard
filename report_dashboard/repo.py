@@ -187,6 +187,13 @@ class ReportRepo:
     def save_keyword_rank(self, row: dict) -> None:
         self.store.save("viral_keyword_ranks", row)
 
+    # -- 키워드 SERP 스냅샷 (append-only, 2026-09-02 신규) ----------------
+
+    def keyword_serp(self, keyword: str | None = None) -> list[dict]:
+        if keyword is not None:
+            return self.store.find("viral_keyword_serp", keyword=keyword)
+        return self.store.load("viral_keyword_serp")
+
     # -- 댓글 (append-only) ---------------------------------------
 
     def comments(self, content_id: str | None = None) -> list[dict]:

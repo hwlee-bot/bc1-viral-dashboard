@@ -102,6 +102,24 @@ class KeywordRank:
 
 
 @dataclass(slots=True)
+class KeywordSerpItem:
+    """키워드 하나를 검색했을 때 실제로 노출되는 게시글 한 건(2026-09-02,
+    상위노출 페이지 키워드 중심 전환). KeywordRank(우리 콘텐츠의 순위만)와
+    달리 경쟁 게시글도 포함한 상위 N건 전체 스냅샷이다 — content_id는
+    우리 콘텐츠와 매치됐을 때만 채워지고, 아니면 빈 문자열이다."""
+    keyword: str
+    search_tab: str
+    captured_at: str
+    rank: int
+    title: str
+    url: str
+    content_id: str = ""
+
+    def to_row(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(slots=True)
 class TargetKeyword:
     """캠페인이 지키려는 키워드 워치리스트 한 줄.
 
