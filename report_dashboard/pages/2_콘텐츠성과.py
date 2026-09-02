@@ -18,8 +18,8 @@ import streamlit as st
 
 from report_dashboard.auth import require_role
 from report_dashboard.report_common import (
-    _primary_metric_value, _render_card_header, _render_channel_donut, _render_comments,
-    _render_metrics_panel, _render_stat_row, load_campaign_context, render_campaign_header,
+    _primary_metric_value, _render_channel_donut, _render_content_summary_card,
+    _render_stat_row, load_campaign_context, render_campaign_header,
 )
 from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import (
@@ -62,21 +62,36 @@ _render_stat_row(
     hero_pct=100 if _top_value > 0 else 0,
 )
 
+CARDS_PER_ROW = 3
+
 perf_left, perf_right = st.columns([2, 1], gap="large")
 with perf_left:
     st.subheader("콘텐츠별 성과")
-    for content in contents_sorted:
-        cid = content["content_id"]
-        primary_value = _primary_metric_value(content, view_metrics, all_metrics)
-        with st.container(border=True):
-            _render_card_header(content, is_empty=(primary_value == 0))
-
+    # 카드형 요약 그리드 + 클릭 시 팝업(2026-09-02, manyo.madup.app 레퍼런스,
+    # 팀장님 요청) — 24건이 인라인 전체 상세로 펼쳐지면 한 화면에 1~2개만
+    # 보여 훑어보기 어렵다는 피드백. 다이얼로그가 필요로 하는 데이터를
+    # 카드마다 미리 한 번씩 필터링해서 넘긴다(_render_content_summary_card
+    # 참고 — 클릭 시점엔 재조회하지 않는다).
+    for row_start in range(0, len(contents_sorted), CARDS_PER_ROW):
+        row = contents_sorted[row_start : row_start + CARDS_PER_ROW]
+        cols = st.columns(CARDS_PER_ROW, gap="medium")
+        for col, content in zip(cols, row):
+            cid = content["content_id"]
+            primary_value = _primary_metric_value(content, view_metrics, all_metrics)
             metrics = sorted((m for m in all_metrics if m["content_id"] == cid), key=lambda m: m["captured_at"])
             content_ranks = [r for r in all_ranks if r["content_id"] == cid]
-            _render_metrics_panel(metrics, latest_rank_row(all_ranks, cid), rank_history(content_ranks), content["channel"])
-
             content_comments = [c for c in all_comments if c["content_id"] == cid]
-            _render_comments(content_comments)
+            with col:
+                with st.container(border=True):
+                    _render_content_summary_card(
+                        content,
+                        primary_value=primary_value,
+                        is_empty=(primary_value == 0),
+                        metrics=metrics,
+                        latest_rank=latest_rank_row(all_ranks, cid),
+                        rank_hist=rank_history(content_ranks),
+                        comments=content_comments,
+                    )
 with perf_right:
     st.subheader("채널 현황")
     with st.container(border=True):

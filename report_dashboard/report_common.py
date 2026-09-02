@@ -166,11 +166,14 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-kwimpact-fill { position:absolute; inset:0; border-radius:999px; background:linear-gradient(90deg, var(--vr-accent), var(--vr-accent-bright)); }
 
 /* ---- 캠페인 키워드 순위: 탭당 전체 목록 ---- */
-/* 키워드 카드 자체가 한 줄에 하나씩(st.markdown 호출마다 별도 블록) 쌓이던 걸
-   3열 그리드로 — 모든 키워드 카드를 하나의 st.markdown 호출로 묶어 한
-   .vr-kw-grid 래퍼 안에 넣고, 그 래퍼에 grid를 건다(카드 개수가 3의 배수가
-   아니어도 마지막 줄은 그냥 비워둔다). */
-.vr-kw-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 14px; align-items: start; }
+/* 2026-09-02 상위노출 페이지가 별도 메뉴로 분리되면서 이 컴포넌트는 이제
+   2:1 비대칭 레이아웃의 좁은 우측 레일(약 320~380px)에서만 쓰인다. 원래
+   3열 grid는 그 절반쯤 되는 폭(예전 리포트 페이지 전체 폭)을 가정하고
+   만들어져서, 지금 폭에서는 칸당 100px 남짓이라 "클렌징오일" 같은
+   키워드가 세 줄로 쪼개져 읽을 수 없었다(팀장님 실측 확인, 2026-09-02).
+   같은 레일의 다른 리스트형 컴포넌트(.vr-explist, 상위노출 순위 리스트)와
+   맞춰 세로 스택으로 바꾼다. */
+.vr-kw-grid { display: flex; flex-direction: column; gap: 10px; }
 .vr-kw-card { border-radius: 12px; background: var(--vr-page); padding: 16px 18px; }
 .vr-kw-name { font-size: 14px; font-weight: 700; color: var(--vr-ink); margin-bottom: 12px; }
 .vr-kw-tab-group { margin-bottom: 14px; }
@@ -266,6 +269,31 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-card-logo { flex:none; width:26px; height:26px; border-radius:7px; overflow:hidden; display:block; }
 .vr-card-logo svg { width:100%; height:100%; display:block; }
 .vr-card-meta { font-size:11px; color:var(--vr-ink-muted); font-weight:500; margin-bottom:14px; }
+
+/* -- 콘텐츠 성과 요약 카드(그리드 한 칸) + 팝업 트리거 --------------------
+   2026-09-02: 콘텐츠마다 전체 상세를 인라인으로 펼치던 걸 카드형 요약 +
+   클릭 시 팝업(st.dialog)으로 바꿨다(manyo.madup.app 레퍼런스, 팀장님
+   요청 — 24건이 한 화면에 1~2개씩만 보여서 훑어보기 어렵다는 피드백).
+   .vr-card-marker의 채널 컬러바·호버 리프트는 그대로 재사용한다. 다만
+   오버레이가 <a>(.vr-card-link, 원문 URL)가 아니라 실제 st.button이다 —
+   팝업을 여는 Python 콜백은 HTML만으로 못 부르기 때문. 다이얼로그 내부의
+   전체 상세 카드에는 이 버튼이 없고, 이 요약 카드에는 .vr-card-link
+   앵커가 없어서 두 오버레이 규칙은 서로 간섭하지 않는다. */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker) [data-testid="stButton"] {
+  position: absolute; inset: 0; z-index: 1; margin: 0;
+}
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker) [data-testid="stButton"] button {
+  width: 100%; height: 100%; opacity: 0; border: none; padding: 0; cursor: pointer;
+}
+.vr-perfmini-row { display:flex; align-items:center; gap:12px; margin: 2px 0 10px; }
+.vr-perfmini-metric { flex:none; }
+.vr-perfmini-metric b { display:block; font-size:22px; font-weight:800; color:var(--vr-ink); letter-spacing:-0.01em; }
+.vr-perfmini-metric b.empty { color:#c7c2b6; font-size:18px; }
+.vr-perfmini-metric span { display:block; font-size:10.5px; color:var(--vr-ink-muted); font-weight:600; margin-top:1px; }
+.vr-perfmini-spark { flex:1 1 auto; min-width:0; }
+.vr-perfmini-spark svg { display:block; width:100%; height:34px; }
+.vr-perfmini-foot { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--vr-ink-muted); }
+.vr-perfmini-comments { display:inline-flex; align-items:center; gap:3px; }
 
 /* -- 조회수 스파크라인 + 순위 추이(왼쪽, 세로로 쌓임) + 조회수/참여율
    뉴모피즘 스탯 카드(오른쪽) ---------------------------------------------
@@ -893,6 +921,78 @@ def _render_comments(content_comments: list[dict]) -> None:
     st.markdown(f'<div class="vr-comments">{"".join(lines)}</div>', unsafe_allow_html=True)
 
 
+@st.dialog("콘텐츠 상세", width="large")
+def _open_content_dialog(
+    content: dict, is_empty: bool, metrics: list[dict], latest_rank: dict | None,
+    rank_hist: list[tuple[str, int]], comments: list[dict],
+) -> None:
+    """요약 카드 클릭 시 뜨는 팝업(2026-09-02, 카드형 요약+팝업 전환).
+
+    이전까지 인라인으로 펼쳐 그리던 헤더+지표+댓글 렌더 함수를 그대로
+    순서대로 호출한다 — 내용 자체는 바뀌지 않았고 담는 그릇만 바뀌었다.
+    """
+    _render_card_header(content, is_empty=is_empty)
+    _render_metrics_panel(metrics, latest_rank, rank_hist, content["channel"])
+    _render_comments(comments)
+
+
+def _render_content_summary_card(
+    content: dict, *, primary_value: int, is_empty: bool,
+    metrics: list[dict], latest_rank: dict | None,
+    rank_hist: list[tuple[str, int]], comments: list[dict],
+) -> None:
+    """콘텐츠 성과 그리드 한 칸. 클릭(카드 전체를 덮는 투명 st.button —
+    위 CSS의 .vr-card-marker 오버레이 규칙 참고)하면 _open_content_dialog가
+    그 콘텐츠의 전체 상세를 팝업으로 띄운다.
+
+    다이얼로그가 필요로 하는 데이터(metrics/latest_rank/rank_hist/comments)를
+    호출부(2_콘텐츠성과.py)가 콘텐츠별로 이미 필터링해둔 걸 그대로 받아서
+    버튼 클릭 시 바로 넘긴다 — 클릭 시점에 다시 조회하지 않는다.
+    """
+    channel = content["channel"]
+    icon = _CHANNEL_ICON.get(channel, "community")
+    title = _esc(content.get("title") or content["url"])
+    release = _esc(content.get("release_at") or "미정")
+    empty_class = " vr-card-marker--empty" if is_empty else ""
+
+    metric_unit = "좋아요" if channel == "instagram" else "조회수"
+    metric_html = (
+        f'<b>{primary_value:,}</b><span>{metric_unit}</span>'
+        if primary_value > 0
+        else f'<b class="empty">—</b><span>{metric_unit}</span>'
+    )
+    chart_svg = (
+        _sparkline_svg([{"likes_count": v} for _, v in likes_history(metrics)], value_field="likes_count")
+        if channel == "instagram"
+        else _sparkline_svg(metrics)
+    )
+    rank_html = (
+        f'<span class="vr-rank-badge">{latest_rank["rank"]}위</span>' if latest_rank
+        else '<span class="vr-rank-badge">—</span>'
+    )
+    comment_html = f'<span class="vr-perfmini-comments">댓글 {len(comments)}</span>' if comments else ""
+
+    st.markdown(
+        f'<span class="vr-card-marker vr-card-marker--{channel}{empty_class}"></span>'
+        f'<div class="vr-card-head">'
+        f'<div class="vr-card-title">{title}</div>'
+        f'<span class="vr-card-logo"><svg><use href="#vr-logo-{icon}"/></svg></span>'
+        f"</div>"
+        f'<div class="vr-card-meta">{_esc(channel)} · 릴리즈 {release}</div>'
+        f'<div class="vr-perfmini-row">'
+        f'<div class="vr-perfmini-metric">{metric_html}</div>'
+        f'<div class="vr-perfmini-spark">{chart_svg}</div>'
+        f"</div>"
+        f'<div class="vr-perfmini-foot">{rank_html}{comment_html}</div>',
+        unsafe_allow_html=True,
+    )
+    if st.button(
+        f"{content.get('title') or content['url']} 상세보기",
+        key=f"perfcard_open_{content['content_id']}",
+    ):
+        _open_content_dialog(content, is_empty, metrics, latest_rank, rank_hist, comments)
+
+
 def _render_keyword_impact_leaderboard(week: str | None, rows: list[dict], score_unit: str) -> None:
     """캠페인 키워드끼리 서로 비교한, 가장 최근 주 파급력 랭킹(2026-09-02 신규).
 
@@ -941,9 +1041,9 @@ def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
         st.caption("등록된 추적 키워드가 없다.")
         return
     # 키워드마다 st.markdown()을 따로 호출하면 Streamlit이 각 호출을 독립된
-    # 블록으로 세로로 쌓아서 카드가 한 줄씩 주르륵 나열된다. 모든 키워드 카드를
-    # 하나의 st.markdown 호출로 묶어 .vr-kw-grid 래퍼(3열 grid) 안에 넣어야
-    # 카드끼리 가로로 나란히 배치된다.
+    # 블록으로 렌더해서 카드 사이 여백이 통제 안 된다. 모든 키워드 카드를
+    # 하나의 st.markdown 호출로 묶어 .vr-kw-grid 래퍼(세로 스택, 좁은 우측
+    # 레일 전용 — 위 CSS 주석 참고) 안에 넣는다.
     cards_html = []
     for keyword, by_tab in summary.items():
         rows_html = [f'<div class="vr-kw-name">"{_esc(keyword)}"</div>']
