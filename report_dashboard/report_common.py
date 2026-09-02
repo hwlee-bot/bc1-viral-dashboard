@@ -680,18 +680,39 @@ def _render_exposure_content_list(contents_by_id: dict, ranks: list[dict], conte
             return
         fallback_items = []
         for content in contents:
-            icon = _CHANNEL_ICON.get(content["channel"], "community")
-            title = _esc(content.get("title") or content["url"])
-            release = _esc(content.get("release_at") or "미정")
-            fallback_items.append(
-                f'<a class="vr-explist-row" href="{_esc(content["url"])}" target="_blank" rel="noopener noreferrer">'
-                f'<span class="vr-rank-badge">—</span>'
-                f'<span class="vr-channel-badge"><svg><use href="#vr-logo-{icon}"/></svg></span>'
-                f'<span class="vr-explist-title">{title}</span>'
-                f'<span class="vr-explist-keyword">{_esc(content["channel"])}</span>'
-                f'<span class="vr-explist-date">릴리즈 {release}</span>'
-                f"</a>"
-            )
+            # 실제 운영 데이터(시트 동기화·수동 등록이 뒤섞인)엔 필드가 빠지거나
+            # 타입이 어긋난 행이 섞여 있을 수 있다 — 위 실측 분기(아래)는 항상
+            # contents_by_id.get()으로 조회해서 None이면 건너뛰지만, 이 폴백은
+            # contents를 직접 순회하는 이 페이지 최초의 자리라 같은 방어가
+            # 없었다. 콘텐츠 한 건이 어떻게 깨져 있든(레코드 자체가 None,
+            # channel이 문자열이 아님 등) 그 한 건 때문에 페이지 전체가
+            # TypeError로 죽으면 안 된다 — 실측 장애(2026-09-02, 등록 콘텐츠
+            # 24건·상위노출 0건 상태에서 재현) 이후 그 행만 건너뛰도록 방어한다.
+            try:
+                url = content.get("url") if isinstance(content, dict) else None
+                if not url:
+                    continue
+                channel = content.get("channel") or "community"
+                icon = _CHANNEL_ICON.get(channel, "community")
+                title = _esc(content.get("title") or url)
+                release = _esc(content.get("release_at") or "미정")
+                fallback_items.append(
+                    f'<a class="vr-explist-row" href="{_esc(url)}" target="_blank" rel="noopener noreferrer">'
+                    f'<span class="vr-rank-badge">—</span>'
+                    f'<span class="vr-channel-badge"><svg><use href="#vr-logo-{icon}"/></svg></span>'
+                    f'<span class="vr-explist-title">{title}</span>'
+                    f'<span class="vr-explist-keyword">{_esc(channel)}</span>'
+                    f'<span class="vr-explist-date">릴리즈 {release}</span>'
+                    f"</a>"
+                )
+            except Exception:
+                # 정확히 어떤 필드가 어떤 식으로 깨졌는지 실측 데이터를 직접
+                # 못 본 상태에서 재현했다 — 원인을 특정 예외 타입으로
+                # 단정하지 않고, 이 폴백 루프에서만은 어떤 예외든 그 행 하나만
+                # 건너뛰고 나머지 콘텐츠는 정상 표시되게 넓게 잡는다.
+                continue
+        if not fallback_items:
+            return
         st.markdown(f'<div class="vr-explist">{"".join(fallback_items)}</div>', unsafe_allow_html=True)
         return
 
