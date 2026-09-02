@@ -21,7 +21,8 @@ import streamlit as st
 
 from report_dashboard.design_system import inject_base_fonts
 from report_dashboard.reporting import (
-    build_export_markdown, latest_keyword_serp, latest_views, likes_history, participation_rate, week_label,
+    build_export_markdown, latest_keyword_serp, latest_matched_ranks, latest_views, likes_history,
+    participation_rate, week_label,
 )
 
 CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
@@ -230,18 +231,23 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-serp-keyword { font-size:13.5px; font-weight:700; color:var(--vr-ink); }
 .vr-serp-tab { font-size:11px; color:var(--vr-ink-muted); font-weight:600; }
 .vr-serp-list { display:flex; flex-direction:column; gap:2px; }
+/* 실제 배포 화면에서 실측 확인(2026-09-03): Streamlit이 마크다운 안의
+   <a>에 자체 링크 스타일(파란색+밑줄)을 걸어두는데, 그게 이 규칙의
+   text-decoration/color보다 우선순위가 높아서 그냥 지나쳤다(display:grid
+   같은 다른 속성은 정상 적용됨 — 딱 이 두 속성만 밀림, getComputedStyle로
+   확인). !important로 이긴다 — 다른 카드 컴포넌트에서도 쓰는 관례. */
 .vr-serp-row {
   display:grid; grid-template-columns: 34px 1fr; align-items:center; gap:10px;
-  padding:9px 10px; border-radius:10px; text-decoration:none; color:inherit;
+  padding:9px 10px; border-radius:10px; text-decoration:none !important; color:inherit !important;
   transition: background 0.15s var(--vr-ease);
 }
 .vr-serp-row:hover { background: var(--vr-page); }
 .vr-serp-row--ours { background: var(--vr-accent-soft); border-left:3px solid var(--vr-accent); padding-left:7px; }
 .vr-serp-row--ours:hover { background: var(--vr-accent-soft); }
-.vr-serp-rank { font-family: var(--vr-font-display); font-size:12.5px; font-weight:800; color:var(--vr-ink-muted); text-align:center; font-variant-numeric: tabular-nums; }
-.vr-serp-row--ours .vr-serp-rank { color: var(--vr-accent); }
-.vr-serp-title { font-size:13px; color:var(--vr-ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-.vr-serp-row--ours .vr-serp-title { font-weight:700; color:var(--vr-ink); }
+.vr-serp-rank { font-family: var(--vr-font-display); font-size:12.5px; font-weight:800; color:var(--vr-ink-muted) !important; text-align:center; font-variant-numeric: tabular-nums; }
+.vr-serp-row--ours .vr-serp-rank { color: var(--vr-accent) !important; }
+.vr-serp-title { font-size:13px; color:var(--vr-ink-2) !important; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.vr-serp-row--ours .vr-serp-title { font-weight:700; color:var(--vr-ink) !important; }
 .vr-serp-empty { color:var(--vr-ink-muted); font-size:12px; padding:4px 0; }
 /* 순위는 잡혔는데(collect_campaign_ranks가 매치) 상위 N건 SERP 리스트엔
    없을 때(예: 18위) 쓰는 텍스트 폴백 — 팀장님 요청 그대로("OOO 몇위"). */
@@ -712,9 +718,8 @@ def _render_keyword_serp_section(
             # 여러 개 매치될 수도 있어 첫 건만 보지 않는다.
             visible_content_ids = {row["content_id"] for row in rows if row["content_id"]}
             our_matches = [
-                r for r in ranks_for_campaign
-                if r["keyword"] == keyword and r["search_tab"] == tab
-                and r.get("content_id") and r["content_id"] not in visible_content_ids
+                r for r in latest_matched_ranks(ranks_for_campaign, keyword, tab)
+                if r["content_id"] not in visible_content_ids
             ]
             note_html = "".join(
                 f'<div class="vr-serp-note">"{_esc((contents_by_id.get(r["content_id"]) or {}).get("title") or r["content_id"])}" {r["rank"]}위</div>'

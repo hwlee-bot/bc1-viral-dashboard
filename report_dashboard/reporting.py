@@ -104,6 +104,20 @@ def latest_keyword_serp(serp_rows: list[dict], keyword: str, search_tab: str) ->
     return sorted(latest_batch, key=lambda r: r["rank"])
 
 
+def latest_matched_ranks(ranks: list[dict], keyword: str, search_tab: str) -> list[dict]:
+    """이 키워드·탭에서 우리 콘텐츠와 매치된(content_id 있는) 가장 최근 수집
+    배치만 돌려준다. viral_keyword_ranks는 append-only라 크론이 돌 때마다
+    행이 계속 쌓이는데, 그걸 그대로 다 보여주면 콘텐츠 하나가 날짜마다 다른
+    순위로 여러 번 나열되는 버그가 난다(2026-09-03 실측 확인: "파우더룸"이
+    9개 날짜의 순위로 중복 표시됨). latest_keyword_serp와 같은 원칙 — 같은
+    실행에서 나온 행은 captured_at 문자열이 정확히 같다."""
+    matched = [r for r in ranks if r["keyword"] == keyword and r["search_tab"] == search_tab and r.get("content_id")]
+    if not matched:
+        return []
+    latest_captured_at = max(r["captured_at"] for r in matched)
+    return [r for r in matched if r["captured_at"] == latest_captured_at]
+
+
 def exposure_counts_by_channel(contents: list[dict], ranks: list[dict]) -> dict:
     counts = defaultdict(int)
     for content in contents:
