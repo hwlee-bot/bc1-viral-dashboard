@@ -1,60 +1,28 @@
-"""캠페인·콘텐츠별 조회수·네이버 순위 추이를 보는 화면. 읽기 전용 — 등록은 2_등록.py에서.
+"""상위노출·콘텐츠 성과 두 페이지가 공유하는 화면 구성요소.
 
-조회수 추이는 실측값만 연결해서 그린다. 데이터가 없는 미래 구간에
-점선으로 "추세(예시)"를 지어내 그리지 않는다.
+원래 하나의 pages/1_리포트.py 안에 있던 CSS·렌더 함수를(2026-09-02, 메뉴
+분리로) 이 모듈로 옮겼다 — 상위노출/콘텐츠 성과가 각자 다른 사이드바
+메뉴(페이지)가 되면서 둘 다 같은 디자인 시스템·카드 렌더링을 써야 했기
+때문. 이 파일은 pages/*.py처럼 Streamlit이 직접 실행하는 스크립트가
+아니라 그냥 임포트되는 모듈이라, require_role() 게이트나 sys.path 삽입
+같은 페이지 전용 로직은 안 들어있다 — 그건 호출하는 각 페이지 파일이
+스스로 해야 한다(보안 이유는 각 페이지 파일 상단 주석 참고).
 
-디자인은 project/active/20260820_바이럴성과-리포팅-대시보드/redesign-v2-report.html을
-이 페이지에 실제로 반영한 v2 브랜드 디자인이다. 다만 두 가지는 옮기지 않았다:
-- 종합 KPI 3개 타일(등록콘텐츠/평균목표진행률/네이버상위노출) — 브레인스토밍 때
-  이미 "종합 지표는 채널별 상위노출 수 하나만 두고 나머지는 콘텐츠 카드로 본다"고
-  정한 결정(context.md)과 충돌해서 뺐다. 필요하면 별도로 다시 요청.
-- 스크롤 진입 모션·숫자 카운트업(IntersectionObserver 기반 JS) — Streamlit의
-  st.markdown(unsafe_allow_html=True)은 보안상 <script> 태그를 실행하지 않는다
-  (st.components.v1.html로 iframe에 넣으면 되지만, 그러면 그 iframe은 바깥 페이지의
-  스크롤을 못 보므로 "스크롤하면 뜨는" 효과 자체가 안 된다). 대신 카드 호버는
-  순수 CSS :hover라 그대로 살렸다.
-- 다크모드도 이번엔 안 옮겼다 — Streamlit 1.58은 라이트/다크를 CSS 커스텀 프로퍼티로
-  안 노출해서(직접 확인함) prefers-color-scheme로 우리 CSS만 어둡게 하면 Streamlit
-  자체 크롬과 어긋날 수 있다. 필요하면 .streamlit/config.toml의 [theme] base="dark"로
-  앱 전체를 다크로 고정하고 우리 토큰도 다크값으로 맞추는 별도 작업으로.
+함수 이름에 언더스코어(_esc, _render_stat_row 등)가 붙어있는 건 원래
+페이지 파일 안에서만 쓰던 이름을 그대로 옮겨서다 — 모듈 경계를 넘어
+명시적으로 import해서 쓰는 용도라 실제로는 이 모듈의 공개 API지만,
+이름을 전부 바꾸면 거대한 파일 전체에 오타 위험만 커져서 이번엔
+이름은 그대로 두고 옮기기만 했다.
 """
 
 import html as html_lib
 
-# Streamlit Cloud는 실행할 스크립트가 있는 폴더만 sys.path에 넣는다(공식 소스
-# streamlit/web/bootstrap.py::_fix_sys_path 확인함) — 저장소 루트는 안 들어간다.
-# 로컬은 `python3 -m streamlit run`(-m이 CWD를 넣어줌)이나 pytest(패키지 루트를
-# 자동 추가)가 이 문제를 가려서 배포 전엔 안 드러났다. report_dashboard.* 절대
-# 임포트가 되려면 저장소 루트가 필요하므로 여기서 직접 넣는다.
-import os
-import sys
-
-_here = os.path.abspath(__file__)
-_repo_root = _here[: _here.index(os.sep + "report_dashboard" + os.sep)]
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
-
 import streamlit as st
 
-from report_dashboard.auth import require_role
 from report_dashboard.design_system import inject_base_fonts
-from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import (
-    build_export_markdown, channel_distribution, exposure_counts_by_channel, keyword_impact_leaderboard,
-    keyword_rank_summary, keyword_weekly_exposure_counts, keyword_weekly_view_sums, latest_rank_row, latest_views,
-    likes_history, participation_rate, rank_history, week_label,
+    TOP_EXPOSURE_RANK, build_export_markdown, latest_views, likes_history, participation_rate, week_label,
 )
-
-# 게이트를 이 파일에서도 호출한다 — app.py의 라우터 게이트에만 의존하면 안 된다.
-# Streamlit의 PagesManager.uses_pages_directory는 프로세스 전역 클래스 속성이고,
-# pages/ 디렉토리가 존재하므로 True로 시작한다. 그 플래그는 사용자 코드가 실제로
-# st.navigation을 실행하는 순간에만 False로 바뀌는데, app.py는 그 앞에서
-# require_role()을 호출하고 미인증 방문자는 전부 st.stop()으로 끝난다. 따라서
-# 미인증 트래픽만 들어오는 동안(배포·재부팅·슬립 해제 직후)에는 플래그가 True로
-# 남아 Streamlit이 app.py 대신 이 페이지 파일을 직접 실행한다 — 라우터 게이트가
-# 아예 돌지 않는다. 실제 서버에서 익명 세션으로 재현 확인함.
-# 그래서 각 페이지가 스스로 안전해야 한다.
-role, email = require_role()
 
 CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
 
@@ -128,6 +96,31 @@ _STYLE_AND_ICONS = """
   color: #1e1600; text-align: left;
   text-shadow: 3px 4px 0 rgba(122,74,0,0.22), 8px 10px 18px rgba(30,22,0,0.16);
 }
+
+/* ---- 스탯 카드 4분할 줄(2026-09-02 신규) ----
+   manyo.madup.app 레퍼런스의 "3개 평범한 카드 + 1개 어두운 히어로 카드"
+   구성을 그대로 가져왔다. 4열 그리드, 좁은 화면에선 2열로 줄어든다. */
+.vr-stat-row { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; margin: 18px 0 4px; }
+@media (max-width: 900px) { .vr-stat-row { grid-template-columns: repeat(2, 1fr); } }
+.vr-stat-tile {
+  background: var(--vr-surface); border: 1px solid var(--vr-border); border-radius: 16px;
+  padding: 16px 18px; display:flex; flex-direction:column; gap: 4px;
+  box-shadow: 0 24px 48px -32px rgba(30,25,15,0.16);
+}
+.vr-stat-tile-label { font-size:11px; font-weight:700; color:var(--vr-ink-muted); }
+.vr-stat-tile-value { font-size:26px; font-weight:800; color:var(--vr-ink); letter-spacing:-0.01em; font-variant-numeric: tabular-nums; }
+.vr-stat-tile-unit { font-size:12px; color:var(--vr-ink-muted); margin-left:2px; }
+/* 히어로 타일 — 나머지 3개와 색·형태를 확 다르게 해서 "이번 주 제일 중요한
+   숫자 하나"에 시선이 먼저 가게 한다(레퍼런스와 같은 의도). */
+.vr-stat-tile--hero {
+  background: linear-gradient(155deg, #1e1600 0%, #33270a 100%); border: none;
+  flex-direction:row; align-items:center; justify-content:space-between; gap:10px;
+}
+.vr-stat-tile--hero .vr-stat-tile-label { color: rgba(255,255,255,0.55); }
+.vr-stat-tile--hero .vr-stat-tile-value { color:#fff; font-size:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.vr-stat-tile-hero-text { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.vr-stat-tile-hero-sub { font-size:11px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
+.vr-stat-tile-ring { flex:none; }
 
 /* ---- 겹치는 히어로 카드: 도넛 + 상위노출 랭크 ----
    .vr-hero를 직접 여는 div로 쓰지 않는다 — Streamlit은 st.markdown 호출마다
@@ -223,6 +216,24 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-rank-value { font-size:17px; font-weight:700; color:var(--vr-ink); font-variant-numeric: tabular-nums; }
 .vr-rank-unit { font-size:11px; color:var(--vr-ink-muted); }
 .vr-rank-share { font-size:10.5px; color:var(--vr-ink-muted); text-align:right; margin-top:2px; grid-column:4; font-variant-numeric: tabular-nums; }
+
+/* -- 상위노출 콘텐츠 리스트(상위노출 탭 메인, 2026-09-02 신규) ---------- */
+.vr-explist { display:flex; flex-direction:column; gap:2px; }
+.vr-explist-row {
+  display:grid; grid-template-columns: 40px 26px 1fr auto; align-items:center; gap:12px;
+  padding:11px 10px; border-radius:10px; text-decoration:none; color:inherit;
+  transition: background 0.15s var(--vr-ease);
+}
+.vr-explist-row:hover { background: var(--vr-page); }
+.vr-explist-row--top { background: var(--vr-accent-soft); }
+.vr-explist-row--top:hover { background: var(--vr-accent-soft); }
+.vr-explist-title { font-size:13.5px; font-weight:700; color:var(--vr-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.vr-explist-keyword { font-size:11.5px; color:var(--vr-ink-muted); font-weight:500; white-space:nowrap; }
+.vr-explist-date { font-size:11px; color:var(--vr-ink-muted); font-variant-numeric: tabular-nums; white-space:nowrap; }
+@media (max-width: 640px) {
+  .vr-explist-row { grid-template-columns: 40px 26px 1fr; }
+  .vr-explist-keyword, .vr-explist-date { display:none; }
+}
 
 /* -- 콘텐츠 카드: marker로 이 카드의 stVerticalBlock만 스코프해서 강화 ----
    목업(redesign-v2-report.html) 그대로: 흰 배경 + 헤어라인 보더 + 채널별
@@ -499,6 +510,57 @@ def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, valu
     )
 
 
+def _ring_svg(pct: int, *, size: int = 56, stroke: int = 7, color: str = "#ffd15c", track: str = "rgba(255,255,255,0.16)") -> str:
+    """작은 원형 게이지 하나 — 스탯 카드 줄의 히어로 타일 전용(2026-09-02,
+    레이아웃 리뉴얼). _render_channel_donut()의 stroke-dasharray 원리를 그대로
+    쓰되 구간을 하나만(진행분/전체) 그린다."""
+    r = (size - stroke) / 2
+    cx = cy = size / 2
+    circumference = 2 * 3.14159265 * r
+    seg = round(pct / 100 * circumference, 2)
+    return (
+        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}">'
+        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{track}" stroke-width="{stroke}"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" stroke-width="{stroke}" '
+        f'stroke-linecap="round" stroke-dasharray="{seg} {circumference:.1f}" '
+        f'transform="rotate(-90 {cx} {cy})"/>'
+        f"</svg>"
+    )
+
+
+def _render_stat_row(
+    tiles: list[tuple[str, str, str]], *, hero_label: str, hero_value: str | None, hero_sub: str, hero_pct: int,
+) -> None:
+    """스탯 카드 4분할 줄(2026-09-02 신규, 레이아웃 리뉴얼 — manyo.madup.app
+    레퍼런스 참고). 앞의 3개(tiles)는 평범한 흰 카드, 맨 오른쪽 1개는 어두운
+    배경 + 원형 게이지로 튀게 만드는 "히어로 타일". 탭마다(상위노출/콘텐츠
+    성과) 강조하고 싶은 지표가 달라서(2026-09-02 탭 분할로) 라벨·값을
+    호출부가 통째로 넘긴다 — 이 함수는 "3+1 레이아웃"이라는 형태만 안다.
+
+    tiles: [(라벨, 이미 포맷된 값 문자열, 단위 또는 빈 문자열), ...] 정확히 3개.
+    hero_value가 None이면(집계 대상 자체가 없음) 게이지는 0%, 값은 "—"."""
+    tiles_html = "".join(
+        f'<div class="vr-stat-tile"><span class="vr-stat-tile-label">{_esc(label)}</span>'
+        f'<b class="vr-stat-tile-value">{_esc(value)}</b>'
+        + (f'<span class="vr-stat-tile-unit">{_esc(unit)}</span>' if unit else "")
+        + "</div>"
+        for label, value, unit in tiles
+    )
+    hero_display = f'"{_esc(hero_value)}"' if hero_value else "—"
+    ring = _ring_svg(hero_pct if hero_value else 0)
+    st.markdown(
+        f'<div class="vr-stat-row">{tiles_html}'
+        f'<div class="vr-stat-tile vr-stat-tile--hero">'
+        f'<div class="vr-stat-tile-hero-text"><span class="vr-stat-tile-label">{_esc(hero_label)}</span>'
+        f'<b class="vr-stat-tile-value">{hero_display}</b>'
+        f'<span class="vr-stat-tile-hero-sub">{_esc(hero_sub)}</span></div>'
+        f'<div class="vr-stat-tile-ring">{ring}</div>'
+        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 _DONUT_COLORS = {"blog": "#3a5ac4", "cafe": "#c9a86a", "community": "#8a6fd6", "instagram": "#d6478a", "youtube": "#e2453e"}
 
 
@@ -566,6 +628,40 @@ def _render_exposure_rank_list(exposure_counts: dict) -> None:
             f"</div>"
         )
     st.markdown(f'<div class="vr-rank-list">{"".join(rows)}</div>', unsafe_allow_html=True)
+
+
+def _render_exposure_content_list(contents_by_id: dict, ranks: list[dict]) -> None:
+    """상위노출(네이버 1p 진입, rank<=10) 콘텐츠를 순위 오름차순 한 줄씩 —
+    상위노출 탭 신설(2026-09-02)로 만든 것. 예전엔 이 정보가 채널별 집계
+    막대(_render_exposure_rank_list, 지금은 우측 인사이트 패널로 이동)와
+    키워드별 카드 그리드에 흩어져 있었는데, "콘텐츠 하나하나가 상위노출
+    됐는지"를 한눈에 보려면 콘텐츠 단위 리스트가 필요해서 새로 뺐다.
+    콘텐츠 제목을 굵게 강조하고(레퍼런스처럼 "무엇이 노출됐나"가 먼저 보이게),
+    1위 행은 .vr-explist-row--top으로 한 번 더 강조한다."""
+    rows = [r for r in ranks if r.get("rank") is not None and r["rank"] <= TOP_EXPOSURE_RANK]
+    rows_sorted = sorted(rows, key=lambda r: r["rank"])
+    if not rows_sorted:
+        st.caption("아직 네이버 상위노출(1p)에 든 콘텐츠가 없다.")
+        return
+
+    items = []
+    for row in rows_sorted:
+        content = contents_by_id.get(row["content_id"])
+        if content is None:
+            continue
+        icon = _CHANNEL_ICON.get(content["channel"], "community")
+        title = _esc(content.get("title") or content["url"])
+        top_cls = " vr-explist-row--top" if row["rank"] == 1 else ""
+        items.append(
+            f'<a class="vr-explist-row{top_cls}" href="{_esc(content["url"])}" target="_blank" rel="noopener noreferrer">'
+            f'<span class="vr-rank-badge">{row["rank"]}위</span>'
+            f'<span class="vr-channel-badge"><svg><use href="#vr-logo-{icon}"/></svg></span>'
+            f'<span class="vr-explist-title">{title}</span>'
+            f'<span class="vr-explist-keyword">"{_esc(row["keyword"])}" · {_esc(row.get("search_tab") or "")}</span>'
+            f'<span class="vr-explist-date">{_esc(row["captured_at"])}</span>'
+            f"</a>"
+        )
+    st.markdown(f'<div class="vr-explist">{"".join(items)}</div>', unsafe_allow_html=True)
 
 
 def _render_card_header(content: dict, *, is_empty: bool = False) -> None:
@@ -878,104 +974,14 @@ def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
     st.markdown(f'<div class="vr-kw-grid">{"".join(cards_html)}</div>', unsafe_allow_html=True)
 
 
-repo = ReportRepo()
-
-_inject_design_system()
-st.markdown(
-    f'<div class="vr-amb"><div class="vr-amb-top">'
-    f'<div class="vr-amb-brand">바이럴 <span>리포팅</span></div>'
-    f'<div class="vr-amb-user">{_esc(email)}</div>'
-    f'</div><div class="vr-amb-title">REPORT DASHBOARD</div></div>',
-    unsafe_allow_html=True,
-)
-
-campaigns = repo.campaigns()
-campaign_labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
-
-if not campaign_labels:
-    st.info("아직 등록된 캠페인이 없다. '등록·관리자' 페이지에서 먼저 등록해야 한다.")
-    st.stop()
-
-campaign_label = st.selectbox("캠페인", options=list(campaign_labels.keys()), key="report_campaign_picker")
-campaign_id = campaign_labels[campaign_label]
-
-channel_filter = st.multiselect("채널 필터", options=CHANNELS, default=CHANNELS, key="report_channel_filter")
-
-contents = [c for c in repo.contents(campaign_id=campaign_id) if c["channel"] in channel_filter]
-content_ids = {c["content_id"] for c in contents}
-
-all_metrics = [m for m in repo.content_metrics() if m["content_id"] in content_ids]
-# auto_instagram 행은 views=0 관례 sentinel이라(실제 조회수 아님, 스펙 §4.2),
-# 조회수 참고 숫자를 계산하는 모든 자리에서 반드시 제외해야 한다 — 안 그러면
-# 매일 쌓이는 이 행이 사람이 입력한 진짜 조회수를 조용히 덮어써 버린다.
-view_metrics = [m for m in all_metrics if m.get("source") != "auto_instagram"]
-all_ranks = [r for r in repo.keyword_ranks() if r["content_id"] in content_ids]
-all_comments = [c for c in repo.comments() if c["content_id"] in content_ids]
-
-if not contents:
-    st.info("이 캠페인에는 등록된 콘텐츠가 없다.")
-    st.stop()
-
-# -- 겹치는 히어로 카드: 채널 비중 도넛 + 채널별 네이버 상위노출 콘텐츠 수 ----
-# (다른 종합 KPI는 일부러 안 둔다 — brainstorming 결정: 콘텐츠 단위 카드가 더 중요)
-# .vr-amb 헤더 아래로 겹쳐 보이도록, 기존 콘텐츠 카드와 같은 marker+:has() 패턴으로
-# 이 컨테이너의 stVerticalBlock 전체를 CSS로 스코프한다(위 .vr-hero-marker 참고).
-
-with st.container(border=True):
-    st.markdown('<span class="vr-hero-marker"></span>', unsafe_allow_html=True)
-
-    _render_channel_donut(channel_distribution(contents))
-
-    st.subheader("채널별 네이버 상위노출 콘텐츠 수")
-
-    exposure_counts = exposure_counts_by_channel(contents, all_ranks)
-    _render_exposure_rank_list(exposure_counts)
-
-# keyword_ranks()는 캠페인으로 필터링하지 않는다(스키마에 campaign_id가 없다) —
-# 이 캠페인에 등록된 키워드 문자열로만 걸러낸다. 알려진 한계: 다른 캠페인이
-# 우연히 똑같은 키워드 문자열을 쓰면 그 결과도 섞여 보인다(design.md §3.2 참고,
-# 스키마 변경 없이 가기로 한 결정). 아래 두 섹션(주간 파급력·상세 목록)이 같이 쓴다.
-target_keywords = list(dict.fromkeys(k["keyword"] for k in repo.target_keywords(campaign_id=campaign_id)))
-keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
-contents_by_id = {c["content_id"]: c for c in repo.contents(campaign_id=campaign_id)}
-
-# -- 주간 키워드 파급력 (캠페인 키워드끼리 서로 비교, 2026-09-02 신규) -------
-
-st.subheader("주간 키워드 파급력")
-
-_IMPACT_BASIS_OPTIONS = {"상위노출 콘텐츠 수": "exposure_count", "매치 콘텐츠 조회수 합": "view_sum"}
-basis_choice = st.radio(
-    "파급력 기준", options=list(_IMPACT_BASIS_OPTIONS.keys()), horizontal=True, key="keyword_impact_basis",
-)
-impact_basis = _IMPACT_BASIS_OPTIONS[basis_choice]
-
-if impact_basis == "exposure_count":
-    weekly_scores = keyword_weekly_exposure_counts(keyword_ranks_for_campaign, target_keywords)
-    score_unit = "건"
-else:
-    weekly_scores = keyword_weekly_view_sums(keyword_ranks_for_campaign, view_metrics, target_keywords)
-    score_unit = "회"
-
-impact_week, impact_rows = keyword_impact_leaderboard(weekly_scores)
-_render_keyword_impact_leaderboard(impact_week, impact_rows, score_unit)
-
-# -- 캠페인 키워드 순위 --------------------------------------------------
-
-st.subheader("캠페인 키워드 순위")
-
-keyword_summary = keyword_rank_summary(keyword_ranks_for_campaign, target_keywords)
-_render_keyword_watchlist(keyword_summary, contents_by_id)
-
-# -- 콘텐츠 카드 --------------------------------------------------------
-
-st.subheader("콘텐츠별 상세")
 
 
 def _primary_metric_value(content: dict, view_metrics: list[dict], all_metrics: list[dict]) -> int:
     """카드 정렬·빈 상태 판정에 쓸 대표 지표. 인스타는 조회수를 구조적으로
     못 모으므로(스펙 §1) 좋아요 최신값을 대신 쓴다 — 안 그러면 좋아요
     데이터가 있어도 카드가 항상 '데이터 없음'으로 표시되고 맨 아래로
-    밀린다."""
+    밀린다. 콘텐츠 성과 페이지의 카드 정렬·히어로 스탯(최다 조회 콘텐츠)
+    둘 다 이 함수를 쓴다."""
     if content["channel"] == "instagram":
         cid = content["content_id"]
         series = likes_history([m for m in all_metrics if m["content_id"] == cid])
@@ -983,34 +989,85 @@ def _primary_metric_value(content: dict, view_metrics: list[dict], all_metrics: 
     return latest_views(view_metrics, content["content_id"])
 
 
-# 조회수(또는 인스타는 좋아요) 높은 순으로 노출한다. 아직 값이 0(=수집 전)인
-# 콘텐츠는 맨 아래로 보내되, 그 안에서는 원래 등록 순서를 유지한다(sorted는 안정 정렬).
-contents_sorted = sorted(
-    contents, key=lambda c: (_primary_metric_value(c, view_metrics, all_metrics) == 0, -_primary_metric_value(c, view_metrics, all_metrics))
-)
+def render_campaign_header(email: str) -> None:
+    """히어로 배너 + 설명 캡션. 상위노출·콘텐츠 성과 두 페이지가 똑같이
+    그린다(2026-09-02, 메뉴 분리) — 각자 별도 사이드바 페이지가 됐으니
+    각 페이지가 자기 스크립트 안에서 직접 호출해야 한다."""
+    _inject_design_system()
+    st.markdown(
+        f'<div class="vr-amb"><div class="vr-amb-top">'
+        f'<div class="vr-amb-brand">바이럴 <span>리포팅</span></div>'
+        f'<div class="vr-amb-user">{_esc(email)}</div>'
+        f'</div><div class="vr-amb-title">REPORT DASHBOARD</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption("채널별 성과·키워드 순위·콘텐츠 상세를 한 화면에서 확인한다.")
 
-for content in contents_sorted:
-    cid = content["content_id"]
-    primary_value = _primary_metric_value(content, view_metrics, all_metrics)
-    with st.container(border=True):
-        _render_card_header(content, is_empty=(primary_value == 0))
 
-        metrics = sorted((m for m in all_metrics if m["content_id"] == cid), key=lambda m: m["captured_at"])
-        content_ranks = [r for r in all_ranks if r["content_id"] == cid]
-        _render_metrics_panel(metrics, latest_rank_row(all_ranks, cid), rank_history(content_ranks), content["channel"])
+def load_campaign_context(repo) -> dict:
+    """캠페인 선택+채널 필터+데이터 로딩+내보내기 버튼 — 상위노출·콘텐츠
+    성과 두 페이지가 똑같이 쓰는 헤더 블록(2026-09-02, 메뉴 분리 전에는
+    한 페이지 안에서 탭 두 개가 나눠 쓰던 걸 그대로 옮김). 등록된 캠페인이
+    없거나 이 캠페인에 콘텐츠가 없으면 st.info + st.stop()으로 여기서
+    끝낸다 — 호출부(각 페이지)는 그 경우를 또 처리할 필요 없다.
 
-        content_comments = [c for c in all_comments if c["content_id"] == cid]
-        _render_comments(content_comments)
+    반환: campaign_label/campaign_id/contents/content_ids/all_metrics/
+    view_metrics/all_ranks/all_comments/target_keywords/
+    keyword_ranks_for_campaign/contents_by_id 키를 가진 dict."""
+    campaigns = repo.campaigns()
+    campaign_labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
 
-# -- 광고주 공유용 내보내기 ------------------------------------------------
+    if not campaign_labels:
+        st.info("아직 등록된 캠페인이 없다. '등록·관리자' 페이지에서 먼저 등록해야 한다.")
+        st.stop()
 
-st.subheader("광고주 공유용 내보내기")
+    picker_col, export_col = st.columns([3, 1])
+    with picker_col:
+        campaign_label = st.selectbox("캠페인", options=list(campaign_labels.keys()), key="report_campaign_picker")
+    campaign_id = campaign_labels[campaign_label]
 
-export_markdown = build_export_markdown(campaign_label, contents, view_metrics, all_ranks, all_comments)
-st.download_button(
-    "리포트 내보내기 (Markdown)",
-    data=export_markdown,
-    file_name=f"{campaign_label}_리포트.md",
-    mime="text/markdown",
-    key="export_button",
-)
+    channel_filter = st.multiselect("채널 필터", options=CHANNELS, default=CHANNELS, key="report_channel_filter")
+
+    contents = [c for c in repo.contents(campaign_id=campaign_id) if c["channel"] in channel_filter]
+    content_ids = {c["content_id"] for c in contents}
+
+    all_metrics = [m for m in repo.content_metrics() if m["content_id"] in content_ids]
+    # auto_instagram 행은 views=0 관례 sentinel이라(실제 조회수 아님, 스펙 §4.2),
+    # 조회수 참고 숫자를 계산하는 모든 자리에서 반드시 제외해야 한다 — 안 그러면
+    # 매일 쌓이는 이 행이 사람이 입력한 진짜 조회수를 조용히 덮어써 버린다.
+    view_metrics = [m for m in all_metrics if m.get("source") != "auto_instagram"]
+    all_ranks = [r for r in repo.keyword_ranks() if r["content_id"] in content_ids]
+    all_comments = [c for c in repo.comments() if c["content_id"] in content_ids]
+
+    # 내보내기 버튼을 페이지 맨 아래 대신 필터 바로 옆(우측 상단)에 둔다
+    # (2026-09-02, 레이아웃 리뉴얼 — manyo.madup.app 레퍼런스처럼 헤더 영역에
+    # 주요 액션을 둔다).
+    with export_col:
+        st.write("")  # 셀렉트박스 라벨 높이만큼 내려서 버튼 세로 위치를 맞춘다.
+        export_markdown = build_export_markdown(campaign_label, contents, view_metrics, all_ranks, all_comments)
+        st.download_button(
+            "리포트 내보내기", data=export_markdown, file_name=f"{campaign_label}_리포트.md",
+            mime="text/markdown", key="export_button", use_container_width=True,
+        )
+
+    if not contents:
+        st.info("이 캠페인에는 등록된 콘텐츠가 없다.")
+        st.stop()
+
+    # keyword_ranks()는 캠페인으로 필터링하지 않는다(스키마에 campaign_id가 없다) —
+    # 이 캠페인에 등록된 키워드 문자열로만 걸러낸다. 알려진 한계: 다른 캠페인이
+    # 우연히 똑같은 키워드 문자열을 쓰면 그 결과도 섞여 보인다(design.md §3.2 참고,
+    # 스키마 변경 없이 가기로 한 결정).
+    target_keywords = list(dict.fromkeys(k["keyword"] for k in repo.target_keywords(campaign_id=campaign_id)))
+    keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
+    contents_by_id = {c["content_id"]: c for c in repo.contents(campaign_id=campaign_id)}
+
+    return {
+        "campaign_label": campaign_label, "campaign_id": campaign_id,
+        "contents": contents, "content_ids": content_ids,
+        "all_metrics": all_metrics, "view_metrics": view_metrics,
+        "all_ranks": all_ranks, "all_comments": all_comments,
+        "target_keywords": target_keywords,
+        "keyword_ranks_for_campaign": keyword_ranks_for_campaign,
+        "contents_by_id": contents_by_id,
+    }

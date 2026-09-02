@@ -2,7 +2,7 @@
 
 설계: docs/superpowers/specs/2026-08-25-content-sheet-sync-design.md
 
-등록·관리자 페이지(pages/2_등록.py)가 이 모듈의 함수를 호출한다. 페이지
+등록·관리자 페이지(pages/3_등록.py)가 이 모듈의 함수를 호출한다. 페이지
 코드는 Streamlit 위젯 조립만 하고, URL 파싱·행 검증·네트워크 호출은
 여기로 분리했다 — auth.current_identity를 monkeypatch하는 기존 테스트
 관례와 같은 방식으로, AppTest에서 fetch_sheet_rows만 갈아끼워서 네트워크

@@ -1,7 +1,8 @@
 """리포트 대시보드의 순수 계산 로직.
 
-Streamlit에 의존하지 않는다 — `pages/1_리포트.py`는 이 함수들을 가져다
-화면에 조립만 한다. 빠른 단위 테스트를 위해 분리했다.
+Streamlit에 의존하지 않는다 — `pages/1_상위노출.py`·`pages/2_콘텐츠성과.py`
+(와 그 둘이 같이 쓰는 `report_common.py`)가 이 함수들을 가져다 화면에
+조립만 한다. 빠른 단위 테스트를 위해 분리했다.
 """
 
 from collections import defaultdict
@@ -116,7 +117,7 @@ def rank_history(ranks_for_content: list[dict]) -> list[tuple[str, int]]:
 
     (수집일, 순위) 쌍의 리스트. 상위노출이 안 돼 순위를 못 잡은 날은
     0으로 취급한다 — "측정 불가"를 나타내는 sentinel이며, 화면 쪽
-    (1_리포트.py)에서 0을 "미노출"로 따로 표시한다.
+    (2_콘텐츠성과.py)에서 0을 "미노출"로 따로 표시한다.
 
     같은 날 여러 키워드가 동시에 잡히면 그 날의 대표값은 더 잘 잡힌(작은,
     0 제외) 순위를 쓴다 — "그날 이 콘텐츠가 얼마나 눈에 띄었는가"를 가장
@@ -163,6 +164,31 @@ def participation_rate(views: int, comments_count: int | None) -> float | None:
     if comments_count is None or not views:
         return None
     return round(comments_count / views * 100, 3)
+
+
+def average_participation_rate(contents: list[dict], view_metrics: list[dict]) -> float | None:
+    """콘텐츠 전체의 참여율(댓글수/조회수) 평균 — 스탯 카드 줄 전용
+    (2026-09-02 신규, 레이아웃 리뉴얼). 콘텐츠별로 최신 조회수 시점의 값을
+    쓰고, 참여율을 계산할 수 없는 콘텐츠(조회수 0이거나 댓글수 미수집)는
+    평균에서 제외한다 — participation_rate()와 같은 원칙, 0%로 지어내지
+    않는다. 대상이 하나도 없으면 None(호출부가 '—'로 표시)."""
+    rates = []
+    for content in contents:
+        latest = _latest_by_content(view_metrics, content["content_id"], "captured_at")
+        if latest is None:
+            continue
+        rate = participation_rate(latest["views"], latest.get("comments_count"))
+        if rate is not None:
+            rates.append(rate)
+    return round(sum(rates) / len(rates), 1) if rates else None
+
+
+def latest_sync_timestamp(metrics: list[dict]) -> str | None:
+    """전체 콘텐츠 메트릭 중 가장 최근 captured_at — 사이드바 "DATA SYNCED"
+    표시 전용(2026-09-02, 레이아웃 리뉴얼). 데이터가 하나도 없으면 None."""
+    if not metrics:
+        return None
+    return max(m["captured_at"] for m in metrics)
 
 
 def iso_week_key(captured_at: str) -> str:

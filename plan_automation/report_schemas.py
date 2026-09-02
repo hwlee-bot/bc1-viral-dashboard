@@ -14,7 +14,7 @@ from plan_automation.schemas import Accuracy
 CHANNELS = {"youtube", "blog", "cafe", "community", "instagram"}
 TARGET_SCOPES = {"content", "channel"}
 METRIC_SOURCES = {
-    "auto_youtube", "auto_naver_blog", "auto_community",
+    "auto_youtube", "auto_naver_blog", "auto_community", "auto_instagram",
     "manual_instagram", "manual_fallback", "manual_backfill",
 }
 
@@ -75,6 +75,7 @@ class ContentMetric:
     source: str
     accuracy: str
     comments_count: int | None = None
+    likes_count: int | None = None
 
     def __post_init__(self):
         if self.source not in METRIC_SOURCES:

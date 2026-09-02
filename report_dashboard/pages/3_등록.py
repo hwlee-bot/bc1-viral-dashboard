@@ -29,7 +29,7 @@ from report_dashboard import content_sheet_sync
 from report_dashboard.design_system import inject_base_fonts
 from report_dashboard.repo import ReportRepo
 
-# 게이트를 이 파일에서도 호출한다 — 이유는 1_리포트.py 상단 주석과 같다
+# 게이트를 이 파일에서도 호출한다 — 이유는 1_상위노출.py 상단 주석과 같다
 # (uses_pages_directory 플래그가 True인 창에서는 app.py가 아예 실행되지 않는다).
 # 이 페이지는 열람 권한을 부여·해제하므로 require_role()만으로는 부족하다 —
 # 그것만 쓰면 광고주(client)도 통과한다. 팀 역할까지 요구한다.
