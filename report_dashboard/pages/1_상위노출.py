@@ -91,7 +91,7 @@ _render_stat_row(
 exp_left, exp_right = st.columns([2, 1], gap="large")
 with exp_left:
     st.subheader("상위노출 콘텐츠")
-    _render_exposure_content_list(contents_by_id, all_ranks)
+    _render_exposure_content_list(contents_by_id, all_ranks, contents)
 with exp_right:
     st.subheader("채널 현황")
     with st.container(border=True):

@@ -658,18 +658,41 @@ def _render_exposure_rank_list(exposure_counts: dict) -> None:
     st.markdown(f'<div class="vr-rank-list">{"".join(rows)}</div>', unsafe_allow_html=True)
 
 
-def _render_exposure_content_list(contents_by_id: dict, ranks: list[dict]) -> None:
+def _render_exposure_content_list(contents_by_id: dict, ranks: list[dict], contents: list[dict] | None = None) -> None:
     """상위노출(네이버 1p 진입, rank<=10) 콘텐츠를 순위 오름차순 한 줄씩 —
     상위노출 탭 신설(2026-09-02)로 만든 것. 예전엔 이 정보가 채널별 집계
     막대(_render_exposure_rank_list, 지금은 우측 인사이트 패널로 이동)와
     키워드별 카드 그리드에 흩어져 있었는데, "콘텐츠 하나하나가 상위노출
     됐는지"를 한눈에 보려면 콘텐츠 단위 리스트가 필요해서 새로 뺐다.
     콘텐츠 제목을 굵게 강조하고(레퍼런스처럼 "무엇이 노출됐나"가 먼저 보이게),
-    1위 행은 .vr-explist-row--top으로 한 번 더 강조한다."""
+    1위 행은 .vr-explist-row--top으로 한 번 더 강조한다.
+
+    상위노출로 잡히는 콘텐츠가 하나도 없으면(캠페인 초반 등) 화면이 통째로
+    비어 보이면 안 된다 — 팀장님 확인(2026-09-02): 등록된 콘텐츠 목록 자체는
+    그대로 보여주고, 그중 아직 순위가 없다는 걸 배지("—")로만 표시한다.
+    이 폴백은 contents가 넘어왔을 때만 동작한다(호출부가 안 넘기면 기존처럼
+    안내 문구만 보여준다)."""
     rows = [r for r in ranks if r.get("rank") is not None and r["rank"] <= TOP_EXPOSURE_RANK]
     rows_sorted = sorted(rows, key=lambda r: r["rank"])
     if not rows_sorted:
-        st.caption("아직 네이버 상위노출(1p)에 든 콘텐츠가 없다.")
+        st.caption("아직 네이버 상위노출(1p)에 든 콘텐츠가 없다 — 등록된 콘텐츠는 다음과 같다.")
+        if not contents:
+            return
+        fallback_items = []
+        for content in contents:
+            icon = _CHANNEL_ICON.get(content["channel"], "community")
+            title = _esc(content.get("title") or content["url"])
+            release = _esc(content.get("release_at") or "미정")
+            fallback_items.append(
+                f'<a class="vr-explist-row" href="{_esc(content["url"])}" target="_blank" rel="noopener noreferrer">'
+                f'<span class="vr-rank-badge">—</span>'
+                f'<span class="vr-channel-badge"><svg><use href="#vr-logo-{icon}"/></svg></span>'
+                f'<span class="vr-explist-title">{title}</span>'
+                f'<span class="vr-explist-keyword">{_esc(content["channel"])}</span>'
+                f'<span class="vr-explist-date">릴리즈 {release}</span>'
+                f"</a>"
+            )
+        st.markdown(f'<div class="vr-explist">{"".join(fallback_items)}</div>', unsafe_allow_html=True)
         return
 
     items = []
