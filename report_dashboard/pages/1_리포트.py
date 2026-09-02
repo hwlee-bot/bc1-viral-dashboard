@@ -288,8 +288,13 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .vr-pt-hit { fill: transparent; }
 .vr-pt-label { opacity: 0; transition: opacity 0.12s var(--vr-ease); pointer-events: none; }
 .vr-pt:hover .vr-pt-label { opacity: 1; }
-.vr-pt-label-bg { fill: #1c1a16; opacity: 0.88; }
-.vr-pt-label-text { font-size: 10px; font-weight: 700; fill: #fff; text-anchor: middle; dominant-baseline: middle; font-variant-numeric: tabular-nums; }
+.vr-pt-label-bg { fill: #1c1a16; opacity: 0.92; }
+/* font-size는 실제 화면 px가 아니라 이 SVG의 viewBox(640x72) 기준 단위다 —
+   차트가 실제로는 카드 폭(보통 640px보다 훨씬 좁게, 예: ~350~450px)로
+   줄어들어 그려지므로 그 축소 비율만큼 라벨도 같이 작아진다. 10px로
+   냈다가 팀장님이 "숫자가 안 보인다"고 확인해줘서(2026-09-02) 훨씬 큰
+   24로 올림 — 실제 화면에서 대략 13~16px 정도로 나온다. */
+.vr-pt-label-text { font-size: 24px; font-weight: 700; fill: #fff; text-anchor: middle; dominant-baseline: middle; font-variant-numeric: tabular-nums; }
 /* 뉴모피즘 "카드 속 카드" — 배경이 페이지톤(--vr-page)에 가깝고 그림자가
    낮은 채도라 뉴모피즘의 이중 그림자(밝음/어두움)가 잘 먹는다. 글래스모피즘은
    블러로 비칠 화려한 배경이 이 자리엔 없어서(흰 카드 위 흰 여백) 대신 골랐다.
@@ -408,22 +413,29 @@ def _polyline_length(points: list[tuple[float, float]]) -> float:
     return total
 
 
-def _hover_point_group(x: float, y: float, label: str, dot_svg: str, *, height: float) -> str:
+def _hover_point_group(x: float, y: float, label: str, dot_svg: str, *, width: float, height: float) -> str:
     """호버하면 라벨(값)이 뜨는 데이터포인트 하나 — 조회수·좋아요 스파크라인과
     상위노출 추이 그래프가 공유하는 조각. 실제 마커(dot_svg)는 항상 그려진
-    상태로 두고, 그 위에 투명 히트서클(반지름 12 — 실제 점보다 훨씬 커서
-    커서를 정확히 점 위에 안 올려도 잡힌다)만 얹어 호버 대상을 넓힌다.
-    라벨은 배경 pill 위에 그려서 선·그리드 위에서도 읽힌다. 위쪽 여백이
-    모자라면(그래프 맨 위 근처 점) 라벨을 점 아래로 내려서 뷰박스 밖으로
-    잘리지 않게 한다."""
-    label_y = y - 14 if y - 14 > 10 else y + 20
-    pill_w = max(24, len(label) * 6.5 + 10)
+    상태로 두고, 그 위에 투명 히트서클(실제 점보다 훨씬 커서 커서를 정확히
+    점 위에 안 올려도 잡힌다)만 얹어 호버 대상을 넓힌다. 라벨은 배경 pill
+    위에 그려서 선·그리드 위에서도 읽힌다. 위쪽 여백이 모자라면(그래프 맨
+    위 근처 점) 라벨을 점 아래로 내려서 뷰박스 밖으로 잘리지 않게 한다.
+
+    치수(pill 크기·오프셋)는 전부 .vr-pt-label-text의 font-size(24, viewBox
+    단위)에 맞춰 잡았다 — 차트가 실제 화면에서 640 viewBox보다 훨씬 좁게
+    그려지는 걸 감안해 처음보다 크게 키운 값(2026-09-02, 팀장님이 "숫자가
+    안 보인다"고 확인). 라벨 폭이 커진 만큼 첫/마지막 점(x가 뷰박스 가장자리
+    바로 근처)에서 pill이 좌우로 잘릴 수 있어, 점 자체(히트서클·마커)는
+    실제 x에 그대로 두고 라벨 <g>의 x만 뷰박스 안쪽으로 클램프한다."""
+    label_y = y - 34 if y - 34 > 24 else y + 48
+    pill_w = max(56, len(label) * 16 + 24)
+    label_x = min(max(x, pill_w / 2 + 4), width - pill_w / 2 - 4)
     return (
         f'<g class="vr-pt">{dot_svg}'
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="12" class="vr-pt-hit"/>'
-        f'<g class="vr-pt-label" transform="translate({x:.1f},{label_y:.1f})">'
-        f'<rect x="{-pill_w / 2:.1f}" y="-13" width="{pill_w:.1f}" height="17" rx="5" class="vr-pt-label-bg"/>'
-        f'<text x="0" y="1" class="vr-pt-label-text">{_esc(label)}</text>'
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="16" class="vr-pt-hit"/>'
+        f'<g class="vr-pt-label" transform="translate({label_x:.1f},{label_y:.1f})">'
+        f'<rect x="{-pill_w / 2:.1f}" y="-16" width="{pill_w:.1f}" height="32" rx="8" class="vr-pt-label-bg"/>'
+        f'<text x="0" y="2" class="vr-pt-label-text">{_esc(label)}</text>'
         f"</g></g>"
     )
 
@@ -468,7 +480,7 @@ def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, valu
         return f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="#fff" stroke="#b8792e" stroke-width="2"/>'
 
     points_svg = "".join(
-        _hover_point_group(x, y, f"{v:,}", _dot_svg(i, x, y), height=height)
+        _hover_point_group(x, y, f"{v:,}", _dot_svg(i, x, y), width=width, height=height)
         for i, (v, (x, y)) in enumerate(zip(views, points))
     )
 
@@ -658,7 +670,7 @@ def _rank_trend_svg(history: list[tuple[str, int]], width: int = 640, height: in
                 if rank == 0
                 else f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="#6da7ec" stroke="#fff" stroke-width="2"/>'
             ),
-            height=height,
+            width=width, height=height,
         )
         for (_, rank), (px, py) in zip(history, points)
     )
