@@ -108,11 +108,22 @@
   function visibleUnder(state, attrs) {
     return VIS_KEYS.every((k) => attrs[k] === undefined || attrs[k] === state[k]);
   }
+  /* 모션 정본(스펙 v4.3 §13). 스크롤 타임라인(`animation-timeline: view()`)은 스트림릿
+     클라우드의 **중첩 iframe**(교차 출처 래퍼 안의 same-origin components.html)에서 비활성이다 —
+     `animation.timeline.currentTime`이 null이고 `getComputedTiming().progress`도 null이라
+     `.reveal`·`.draw`·`.grow`·`.fade-late`가 아무것도 하지 않는다(스크롤해도 곡선이 안 그려진다).
+     그래서 진입 감지는 IntersectionObserver가, 재생은 시간 기반 애니메이션이 맡고, 키프레임은
+     base.css의 것(`reveal-up`·`draw-ln`·`grow-x`·`fade-in`)을 그대로 재사용한다 —
+     목업·로컬·클라우드에서 같은 모션이 나오고, 첫 화면에 이미 들어와 있던 차트도 로드 때 그려진다. */
+  const MOTION_SELECTOR = ".reveal, .draw, .grow, .fade-late";
+  /* 스트립 카드 차트를 순서대로 밀어 한꺼번에 튀지 않게 한다(첫 로드 한정). */
+  function staggerDelay(index, base) { return index * (base === undefined ? 90 : base); }
   // `_` 접두사는 "Python 정본이 아니라 포맷 재현용"이라는 뜻 — 노출은 node 테스트가 고정하기 위해서다.
   const RT = {
     combineSeries, combineRate, deltaOverDays, orderRows, avgRate, fmtInt, deltaLabel, dailyDiff, visibleUnder,
     _fmtG: fmtG, _pyRound: pyRound, _pyRound1: pyRound1, _safeLabel: safeLabel, _pickLabels: pickLabels,
     _knownChannels: knownChannels, _CH_LABEL: CH_LABEL,
+    _staggerDelay: staggerDelay, _motionSelector: MOTION_SELECTOR,
   };
   root.RT = RT;
   if (typeof root.document === "undefined" || !root.frameElement) return;   // node 테스트·단독 열기 경로
@@ -158,8 +169,118 @@
     " .chip[data-ch]:not(.on){color:var(--muted)} .chip[data-ch]:not(.on) .dot{opacity:.25}" +
     " .srow.ours.is-off{background:transparent;margin:0;padding-left:0;padding-right:0;border-bottom-color:var(--hair)}" +
     " .srow.ours.is-off .r,.srow.ours.is-off .t,.srow.ours.is-off .src{color:var(--ink-2);font-weight:500}" +
-    " .beyond.is-off{opacity:.45} .detail.is-empty{position:static;padding-left:0;border-left:0}";
+    " .beyond.is-off{opacity:.45} .detail.is-empty{position:static;padding-left:0;border-left:0}" +
+    /* 모션(§13): base.css의 스크롤 타임라인을 끄고 같은 키프레임을 시간 애니메이션으로 돌린다.
+       `animation-timeline`/`animation-range`를 `!important`로 되돌려야 한다 — `animation: none`
+       단축 속성만으로는 엔진에 따라 타임라인이 남는다. `.is-in`은 runtime `motion()`이 붙인다.
+       `prefers-reduced-motion: reduce`에서는 이 블록 전체가 적용되지 않으므로(미디어 쿼리)
+       `opacity:0`·`scaleX(0)` 같은 시작 상태도 없다 = 관찰자가 안 돌아도 아무것도 숨지 않는다. */
+    " @media (prefers-reduced-motion: no-preference){" +
+    " .reveal,.draw,.grow > i,.fade-late{animation-timeline:auto!important;animation-range:normal!important}" +
+    " .reveal{animation:none;opacity:0;transform:translateY(18px)}" +
+    " .reveal.is-in{animation:reveal-up .6s var(--ease) both}" +
+    " .draw{animation:none}" +
+    " .draw.is-in{animation:draw-ln .9s var(--ease) both}" +
+    " .grow > i{animation:none;transform:scaleX(0)}" +
+    " .grow.is-in > i{animation:grow-x .7s var(--ease) both}" +
+    " .fade-late{animation:none;opacity:0}" +
+    " .fade-late.is-in{animation:fade-in .4s var(--ease) .5s both}" +
+    " }" +
+    /* reduce 모드에서 `.draw` 선이 아예 안 보이던 것을 여기서 막는다 — base.css의 모션 블록이
+       통째로 빠지면서 `draw-ln`(dashoffset→0)도 사라지는데, 대시 속성은 마크업에 남아 있어
+       선이 100% 잘려 나간다. 표현 속성(attribute)은 author CSS에 지므로 한 줄로 되돌린다. */
+    " @media (prefers-reduced-motion: reduce){.draw{stroke-dashoffset:0}}";
   document.head.appendChild(style);
+
+  /* ================= 모션 글루(스펙 v4.3 §13) =================
+     `motion()`은 몇 번 불러도 안전하다 — 아직 `.is-in`이 안 붙은 대상만 (다시) 관찰한다.
+     그래서 차트를 다시 그린 뒤(`renderCharts`)·상세를 갈아끼운 뒤(`applySelection`)
+     그냥 한 번 더 부르면 새로 생긴 SVG가 진입할 때 다시 그려진다. */
+  const REDUCED = !!(root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const staggerOf = new WeakMap();       // 관찰 대상 → 첫 로드 스태거 지연(ms), 쓰고 나면 지운다
+  let io = null, firstMotionPass = true;
+
+  /* 관찰 대상: `.reveal`/`.grow`는 자기 자신, SVG 안의 `.draw`/`.fade-late`는 **가장 가까운
+     `.chart` 컨테이너**. SVG 자식은 레이아웃 박스가 없어 IntersectionObserver가 신뢰할 수 없다. */
+  function motionHosts(scope) {
+    const out = [];
+    $$(MOTION_SELECTOR, scope).forEach((el) => {
+      const svg = el.closest("svg");
+      const host = svg ? (el.closest(".chart") || svg.parentElement || svg) : el;
+      if (host && out.indexOf(host) < 0) out.push(host);
+    });
+    return out;
+  }
+  /* 그 host가 진입했을 때 `.is-in`을 받을 요소들 — 차트 컨테이너면 안쪽 SVG 요소 전부. */
+  function inTargets(host) {
+    return host.matches(MOTION_SELECTOR) ? [host] : $$(".draw, .fade-late", host);
+  }
+  function enterMotion(host) {
+    const delay = staggerOf.get(host) || 0;
+    staggerOf.delete(host);              // 한 번 쓰면 버린다 — 다시 그린 차트에 옛 지연이 되살아나면 안 된다
+    inTargets(host).forEach((el) => {
+      /* `.fade-late`는 원래 .5s 늦게 뜨는 것이므로 스태거를 그 위에 얹는다 —
+         animationDelay를 그냥 덮으면 끝점·워시가 선과 동시에 나타난다. */
+      el.style.animationDelay = delay ? (el.classList.contains("fade-late") ? delay + 500 : delay) + "ms" : "";
+      el.classList.add("is-in");
+    });
+  }
+  /* 진입 판정은 **대상 크기와 무관**해야 한다. 임계값을 비율(0.15)로 두면 뷰포트보다 큰
+     표·섹션은 그 비율을 절대 못 채우고, IO는 임계 구간이 바뀔 때만 콜백하므로 0 경계에서
+     교차 높이 0으로 한 번 불린 뒤 다시 불리지 않는다 = 영원히 `opacity:0`. 그래서
+     `threshold: 0` + `rootMargin` 아래 -20%: **요소의 윗변이 뷰포트 80% 선을 지나면 진입**. */
+  function onMotion(entries) {
+    entries.forEach((e) => {
+      if (!e.isIntersecting) return;
+      io.unobserve(e.target);
+      enterMotion(e.target);
+    });
+  }
+  /* 스태거는 **보이는** 호스트만 세어 매긴다 — 상위노출은 깊이×변형 스파크를 6벌 그려두고
+     5벌이 `hidden`이라, 전부 세면 보이는 카드가 index 7(630ms)까지 밀리고 세그먼트를 눌러
+     드러난 사본이 1.17s 뒤에 뜬다. 매 호출마다 처음부터 다시 매기고(옛 index 재사용 금지),
+     첫 패스에서만 매긴다 — 나중에 드러난 사본은 지연 0으로 즉시 그려진다. */
+  function stageStagger() {
+    $$(".strip").forEach((strip) => {
+      $$(".chart", strip)
+        .filter((c) => !c.hidden && !c.closest("[hidden]"))
+        .forEach((c, i) => staggerOf.set(c, RT._staggerDelay(i)));
+    });
+  }
+  /* 문서 **맨 아래 20%**는 뷰포트 80% 선 위로 올라올 수 없다 — 마지막 섹션(요약의
+     `section.reveal.recent`)이 끝까지 스크롤해도 영원히 `opacity:0`으로 남는다(실측).
+     그래서 바닥에 닿으면(스크롤이 아예 없는 짧은 페이지도 여기 해당) 남은 대상을
+     "화면 안에 있는가"만 보고 켠다. rootMargin을 줄여 해결하려 하면 진입 시점이 어색해진다. */
+  function flushBottom() {
+    if (document.documentElement.scrollHeight - (root.scrollY + root.innerHeight) > 4) return;
+    motionHosts(document).forEach((h) => {
+      if (!inTargets(h).some((el) => !el.classList.contains("is-in"))) return;
+      const r = h.getBoundingClientRect();
+      if (!r.height || r.top >= root.innerHeight || r.bottom <= 0) return;
+      if (io) io.unobserve(h);
+      enterMotion(h);
+    });
+  }
+  function motion() {
+    const hosts = motionHosts(document);
+    /* reduce 모드·관찰자 없음 → 즉시 켠다. rt-css 모션 블록이 미디어 쿼리로 빠져 있어
+       애니메이션도 시작 상태(opacity:0)도 없다 = 그냥 보이는 상태로 고정된다. */
+    if (REDUCED || !root.IntersectionObserver) {
+      hosts.forEach(enterMotion);
+      return;
+    }
+    if (!io) io = new root.IntersectionObserver(onMotion, { root: null, threshold: 0, rootMargin: "0px 0px -20% 0px" });
+    if (firstMotionPass) {
+      firstMotionPass = false;
+      stageStagger();
+    }
+    hosts.forEach((h) => {
+      // 이미 다 켜진 host는 건너뛴다. 다시 그려진 차트는 새 SVG 자식에 `.is-in`이 없으므로 여기서 걸린다.
+      if (inTargets(h).some((el) => !el.classList.contains("is-in"))) io.observe(h);
+    });
+    flushBottom();                       // 이미 바닥이면(짧은 페이지) 관찰자를 기다릴 필요가 없다
+  }
+  root.addEventListener("scroll", flushBottom, { passive: true });
 
   const EMPTY_HERO = '<div class="empty"><b>추이를 그릴 데이터가 아직 부족합니다</b>수집일이 3일 이상 쌓이면 곡선이 나타납니다.</div>';
   /* 모드에 따라 바뀌는 것은 범례 한 곳뿐이다(리뷰 3) — `.sec-h`의 sub 라벨은 세 모드 모두
@@ -229,6 +350,15 @@
     aside.classList.toggle("is-empty", !src);   // 빈 상태는 sticky·왼쪽 헤어라인·패딩을 뗀다
     shownDetail = state.selected;
     reEnter(aside);
+    /* `#detail`은 `.detail.reveal`이고 `.reveal.is-in`(클래스 2개)이 `.enter`(1개)를 특이도로
+       이긴다 — `.enter`만 다시 걸면 화면이 그대로다. `.is-in`도 떼고 리플로우 후 다시 붙여
+       `reveal-up`을 재생한다. 그리고 방금 떼어낸 안쪽 `.chart` 호스트의 관찰을 버린다
+       (문서에 없는 요소를 계속 관찰하면 콜백이 오지 않는데 관찰 목록에는 남는다). */
+    aside.classList.remove("is-in");
+    void aside.offsetWidth;
+    aside.classList.add("is-in");
+    if (io) io.disconnect();
+    motion();                                   // 새로 심은 상세 안의 `.grow`·스파크를 다시 관찰한다(§13)
   }
 
   function applyState() {
@@ -449,6 +579,7 @@
         d.className = "delta flat";
       }
     });
+    motion();                                   // 새로 만든 SVG가 진입할 때 다시 그려지게(§13)
   }
 
   function bindControls() {
@@ -514,8 +645,17 @@
   }
 
   bindControls();
-  applyState();
-  booted = true;
+  /* `motion()`을 **먼저** 부른다 — 모션의 시작 상태가 `opacity:0`이라, `applyState()`가
+     던지면 모션이 한 번도 안 돌아 리포트 본문이 통째로 비어 보인다(예전에는 그냥 모션만
+     안 돌았다). 그래서 앞에서 한 번 켜고, 무슨 일이 있어도 `finally`에서 한 번 더 켠다
+     (`motion()`은 idempotent — 아직 `.is-in`이 없는 대상만 다시 관찰한다). */
+  motion();
+  try {
+    applyState();
+  } finally {
+    motion();
+    booted = true;
+  }
   /* 스트림릿 레이아웃이 늦게 자리를 잡으므로 높이를 몇 번 더 맞춘다(스펙 §6). */
   root.addEventListener("load", fit);
   try { root.parent.addEventListener("resize", fit); } catch (e) {}
