@@ -360,7 +360,7 @@ def build_export_markdown(
 ) -> str:
     lines = [f"# {campaign_label} 성과 리포트", ""]
     if share_summary:
-        lines += ["## 키워드 점유율", f"- 분모: 키워드×탭 상위 10 슬롯 {share_summary['denominator']}개",
+        lines += ["## 키워드 점유율", f"- 분모: 키워드×탭 네이버 검색 API 최신순 상위 10 · {share_summary['denominator']}",
                   f"- {share_summary.get('ours_brand') or '우리 브랜드'} {share_summary['ours_pct']:.1f}% · 캠페인 콘텐츠 {share_summary['campaign_pct']:.1f}%"]
         lines += [f"- {b} {p:.1f}%" for b, p in share_summary["by_brand"].items() if b != share_summary.get("ours_brand")]
         lines.append("")

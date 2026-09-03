@@ -89,6 +89,16 @@ def keyword_share_rows(serp_rows, keywords, tabs, terms, *, weighted=False) -> l
 
 
 def total_share(rows: list[dict], ours_brand: str | None) -> dict:
+    """전체 점유율 집계. 잔여분을 두 갈래로 정직하게 나눈다(R23):
+
+    - other_brands_pct: 우리·상위 2개 경쟁 브랜드 밖에서 실제로 제목에 매칭된
+      다른 브랜드들의 합 — "기타 브랜드".
+    - unmatched_pct: 그러고도 남는, 아예 브랜드가 안 매칭된(또는 미수집) 슬롯
+      비율 — "미매칭 슬롯". 100에서 우리·top2·기타 브랜드를 뺀 나머지이므로
+      반올림 오차로 음수가 나올 수 있어 0 이상으로 clamp한다.
+
+    other_pct는 예전 키 이름과의 하위 호환을 위한 unmatched_pct의 별칭이다.
+    """
     denom = sum(r["denominator"] for r in rows) or 1
     by_brand: dict[str, float] = defaultdict(float)
     for r in rows:
@@ -98,15 +108,19 @@ def total_share(rows: list[dict], ours_brand: str | None) -> dict:
     pct = {b: round(s / denom * 100, 1) for b, s in by_brand.items()}
     competitors = sorted((b for b in pct if b != ours_brand), key=lambda b: -pct[b])
     top = competitors[:2]
+    other_brands = competitors[2:]
     ours_pct = round(ours_total / denom * 100, 1)
-    other = round(100 - ours_pct - sum(pct[b] for b in top), 1)
+    other_brands_pct = round(sum(pct[b] for b in other_brands), 1)
+    unmatched_pct = max(0.0, round(100 - ours_pct - sum(pct[b] for b in top) - other_brands_pct, 1))
     return {
         "by_brand": pct,
         "ours_pct": ours_pct,
         "campaign_pct": round(sum(r["campaign_score"] for r in rows) / denom * 100, 1),
         "denominator": denom,
         "top_brands": top,
-        "other_pct": max(0.0, other),
+        "other_brands_pct": other_brands_pct,
+        "unmatched_pct": unmatched_pct,
+        "other_pct": unmatched_pct,  # 하위 호환 별칭
         "ours_brand": ours_brand,
     }
 

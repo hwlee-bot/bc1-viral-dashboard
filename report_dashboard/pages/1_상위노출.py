@@ -95,7 +95,7 @@ render_export_button(campaign, ctx, share_summary=tot, container=export_slot)
 slots = len(kws) * len(SERP_TABS) * share.SLOTS_PER_TAB
 stats = [
     ui.stat("추적 키워드", f"{len(kws)}<small>개 · {slots}슬롯</small>", ui.spark_box(""), ui.delta("블로그·카페 상위 10", "flat")),
-    ui.stat("브랜드 점유율", f"{tot['ours_pct']:.1f}<small>%</small>" if tot else "—", ui.spark_box(""), ui.delta(f"분모 {tot['denominator']}" if tot else "브랜드 사전 필요", "flat")),
+    ui.stat("브랜드 점유율", f"{tot['ours_pct']:.1f}<small>%</small>" if tot else "—", ui.spark_box(""), ui.delta(f"분모 {tot['denominator']}{'점' if weighted else '슬롯'}" if tot else "브랜드 사전 필요", "flat")),
     ui.stat("캠페인 콘텐츠 점유율", f"{tot['campaign_pct']:.1f}<small>%</small>" if tot else "—", ui.spark_box(""), ui.delta(f"상위 10 진입 {in_top10}", "flat")),
     ui.stat("상위 100위 내 노출", f"{sum(1 for by_tab in summary.values() for tab in SERP_TABS for r in by_tab.get(tab, []) if r['rank'] is not None)}<small>건</small>",
             ui.big_rank(best, f"{best_kw[0]} · {best_kw[1].replace('API', '')}") if best else ui.spark_box(""), ui.delta("최고 순위" if best else "아직 노출 없음", "flat")),
@@ -106,7 +106,7 @@ render_share_section(ctx, terms, weighted)
 
 left, rail = st.columns([8, 4], gap="large")
 with left:
-    st.markdown(ui.section_header("키워드 검색결과", sub="실제 SERP 상위 10 · 우리 콘텐츠는 색으로 표시"), unsafe_allow_html=True)
+    st.markdown(ui.section_header("키워드 검색결과", sub="네이버 검색 API 최신순 상위 10 · 우리 콘텐츠는 색으로 표시"), unsafe_allow_html=True)
     if kws:
         picked = st.pills("키워드", options=kws, default=kws[0], selection_mode="single", key="serp_keyword", label_visibility="collapsed") or kws[0]
         render_serp_columns(ctx, picked)

@@ -433,4 +433,11 @@ def inject_design_system() -> None:
     height=0(또는 동급 "완전히 숨김" 옵션)을 지원하게 되면 그때 바꾼다.
     """
     st.markdown(f"<style>{TOKENS_CSS}{COMPONENT_CSS}{CHROME_CSS}</style>", unsafe_allow_html=True)
-    components.html(THEME_HOOK_HTML, height=0)
+    try:
+        # R24: 테마 훅은 화면 표시에 필수가 아니라 다크/라이트 보정용 진행성 향상(progressive
+        # enhancement)이다 — components.html/구 API가 향후 streamlit 버전에서 제거되거나
+        # 런타임에서 예외를 던져도 페이지 전체가 죽으면 안 되므로 여기서 흡수한다.
+        # 실패 시 토큰은 :root의 prefers-color-scheme 미디어쿼리 기본값으로 자연히 폴백된다.
+        components.html(THEME_HOOK_HTML, height=0)
+    except Exception:
+        pass

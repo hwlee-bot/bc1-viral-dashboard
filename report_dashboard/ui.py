@@ -80,10 +80,26 @@ def inline_bar(pct: float, color: str = "var(--ink)", width: int = 96) -> str:
     return f'<span class="inline-bar grow" style="width:{width}px"><i style="width:{pct:g}%;background:{color}"></i></span>'
 
 
-def channel_rows(distribution: dict[str, int]) -> str:
-    """channel key는 CSS style= 컨텍스트(var(--ch-<channel>))에 그대로 들어가므로 CHANNELS 키만 허용(외부 문자열 금지)."""
-    total = sum(distribution.values()) or 1
+def channel_rows(distribution: dict[str, int], *, numerators: dict[str, int] | None = None, denominators: dict[str, int] | None = None) -> str:
+    """channel key는 CSS style= 컨텍스트(var(--ch-<channel>))에 그대로 들어가므로 esc()로 감싼다
+    (M4 — 외부 채널 문자열이 그대로 들어가면 style= 컨텍스트 주입이 된다).
+
+    numerators/denominators를 주면(예: 채널별 네이버 노출 레일) 오른쪽 값과 막대 채움을
+    "n / N"(노출 n건 / 전체 N건) 기준으로 그린다 — 안 주면(기본) 기존처럼 분포 비중(%)을 그린다.
+    """
     rows = []
+    if numerators is not None or denominators is not None:
+        for ch, n in sorted(distribution.items(), key=lambda kv: -kv[1]):
+            total = (denominators or {}).get(ch, n) or 0
+            num = (numerators or {}).get(ch, 0)
+            pct = round(num / total * 100) if total else 0
+            rows.append(
+                f'<div class="ch-row"><span class="n"><i class="dot" style="background:var(--ch-{esc(ch)})"></i>{esc(CHANNEL_LABEL.get(ch, ch))}</span>'
+                f'<div class="hbar grow"><i style="width:{pct}%;background:var(--ch-{esc(ch)})"></i></div>'
+                f'<span class="v num">{num}<small>/ {total}</small></span></div>'
+            )
+        return "".join(rows)
+    total = sum(distribution.values()) or 1
     for ch, n in sorted(distribution.items(), key=lambda kv: -kv[1]):
         pct = round(n / total * 100)
         rows.append(
@@ -98,14 +114,17 @@ def empty_state(title: str, hint: str) -> str:
     return f'<div class="empty"><b>{esc(title)}</b>{esc(hint)}</div>'
 
 
+_R_CLASS = ' class="r"'  # Python 3.11 호환(I6) — f-string 표현식 안에 백슬래시 이스케이프를 못 넣으므로 상수로 뺐다.
+
+
 def table_html(headers, rows, *, selected_index=None) -> str:
-    th = "".join(f'<th{" class=\"r\"" if right else ""}>{esc(h)}</th>' for h, right in headers)
+    th = "".join(f'<th{_R_CLASS if right else ""}>{esc(h)}</th>' for h, right in headers)
     body = []
     for i, cells in enumerate(rows):
         cls = ' class="is-sel"' if selected_index == i else ""
-        tds = "".join(f'<td{" class=\"r\"" if right else ""}>{c}</td>' for c, (_, right) in zip(cells, headers))
+        tds = "".join(f'<td{_R_CLASS if right else ""}>{c}</td>' for c, (_, right) in zip(cells, headers))
         body.append(f"<tr{cls}>{tds}</tr>")
-    return f"<table class=\"reveal\"><thead><tr>{th}</tr></thead><tbody>{''.join(body)}</tbody></table>"
+    return f'<table class="reveal"><thead><tr>{th}</tr></thead><tbody>{"".join(body)}</tbody></table>'
 
 
 def status(kind: str, label: str) -> str:

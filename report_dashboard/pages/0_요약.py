@@ -11,7 +11,9 @@ from report_dashboard import charts, ui
 from report_dashboard.auth import require_role
 from report_dashboard.design_system import inject_design_system
 from report_dashboard.header import render_header
-from report_dashboard.report_common import CHANNELS, load_campaign_context, render_content_table, render_export_button
+from report_dashboard.report_common import (
+    CHANNELS, SERP_TABS, load_campaign_context, render_content_table, render_export_button,
+)
 from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import (
     average_participation_rate, channel_distribution, daily_view_series, delta_over_days,
@@ -47,17 +49,27 @@ if ctx is None:
     st.stop()
 
 contents, view_metrics, all_metrics = ctx["contents"], ctx["view_metrics"], ctx["all_metrics"]
-series = daily_view_series(view_metrics)
+contents_by_id = ctx["contents_by_id"]
+# R22: 누적 조회수는 콘텐츠 성과 페이지와 같은 정의를 써야 한다 — 인스타는
+# 조회수를 구조적으로 못 모으므로(§1) 채널 기준으로 아예 뺀다. view_metrics는
+# 이미 auto_instagram sentinel을 뺀 상태지만, 수동 입력(manual_instagram 등)
+# 인스타 조회수 행이 섞여 있어도 여기서 또 한 번 채널로 걸러야 새어 들어가지 않는다.
+series = daily_view_series([m for m in view_metrics if contents_by_id.get(m["content_id"], {}).get("channel") != "instagram"])
 total_views = series[-1][1] if series else 0
 d7 = delta_over_days(series, 7)
 comments_n = len(ctx["all_comments"])
 kw_summary = keyword_rank_summary(ctx["keyword_ranks_for_campaign"], ctx["target_keywords"])
+# R11: VIEW 탭은 수집 대상이 아니다 — 최고 순위도 1_상위노출.py와 같은 기준으로
+# 블로그·카페(SERP_TABS)만 봐야 exposed 카운트·최고 순위 표시가 서로 어긋나지 않는다.
 best = None
 for kw, by_tab in kw_summary.items():
-    for tab, rows in by_tab.items():
-        for r in rows:
+    for tab in SERP_TABS:
+        for r in by_tab.get(tab, []):
             if r["rank"] is not None and (best is None or r["rank"] < best[0]):
                 best = (r["rank"], kw, tab, r["content_id"])
+# I1: "네이버 상위노출" 카운트는 최고 순위 1건 유무(1/0)가 아니라, SERP 탭(블로그·카페 —
+# VIEW 제외, 1_상위노출.py와 동일 기준)에서 실제로 노출된 키워드 개수를 세야 한다.
+exposed = sum(1 for by_tab in kw_summary.values() if any(r["rank"] is not None for tab in SERP_TABS for r in by_tab.get(tab, [])))
 
 period = f"{campaign.get('start_date') or '—'} – {campaign.get('end_date') or '진행 중'}"
 meta = (f"<b>{ui.esc(period)}</b> · 콘텐츠 {len(contents)}건 · 채널 {len(channel_distribution(contents))}개 · "
@@ -69,19 +81,19 @@ render_export_button(campaign, ctx, container=export_slot)
 spark_views = charts.sparkline_svg([v for _, v in series]) if len(series) >= 2 else ""
 rank_side = ui.big_rank(best[0], f"{best[1]} · {best[2].replace('API', '')}") if best else ui.spark_box("")
 stats = [
-    ui.stat("누적 조회수", f"{total_views:,}", ui.spark_box(spark_views),
+    ui.stat('누적 조회수 <span class="pill">카페·커뮤니티</span>', f"{total_views:,}", ui.spark_box(spark_views),
             (ui.delta(f"+{d7[0]:,} · {d7[1]}d", "up") if d7[0] > 0 else
              ui.delta(f"{d7[0]:,} · {d7[1]}d", "down") if d7[0] < 0 else
              ui.delta(f"변동 없음 · {d7[1]}d", "flat")) if d7 else ui.delta(f"수집 {len(series)}일차", "flat")),
     ui.stat("등록 콘텐츠", f"{len(contents)}<small>건</small>", ui.spark_box(""), ui.delta(f"인스타 좋아요 합 {likes_total(all_metrics, contents):,}", "flat")),
     ui.stat("수집 댓글", f"{comments_n}<small>건</small>", ui.spark_box(""), ui.delta("카페·인스타 자동 수집", "flat")),
-    ui.stat("네이버 상위노출", f"{1 if best else 0}<small>/ {len(ctx['target_keywords'])} 키워드</small>", rank_side,
+    ui.stat("네이버 상위노출", f"{exposed}<small>/ {len(ctx['target_keywords'])} 키워드</small>", rank_side,
             ui.delta((ctx["contents_by_id"].get(best[3]) or {}).get("title", "") if best else "아직 노출 없음", "flat")),
 ]
 st.markdown(ui.stat_strip(stats) + '<hr class="rule">', unsafe_allow_html=True)
 
 right = '<span class="label"><i class="dot" style="background:var(--ink)"></i> 전체 누적</span>'
-st.markdown(ui.section_header("조회수 추이", right_html=right), unsafe_allow_html=True)
+st.markdown(ui.section_header("조회수 추이", sub="카페·커뮤니티 조회수", right_html=right), unsafe_allow_html=True)
 if len(series) >= 3:
     st.markdown(f'<div class="chart hero-chart">{charts.area_chart_svg([v for _, v in series], labels=[d[5:].replace("-", ".") for d, _ in series], width=1140, height=230, pad_right=64, ink=True)}</div>', unsafe_allow_html=True)
 else:
@@ -105,5 +117,5 @@ with rightcol:
                 f'<div class="mini"><div><span class="label">평균 참여율</span><div class="figure num">{f"{avg:.1f}" if avg is not None else "—"}<small>%</small></div></div>'
                 f'<div><span class="label">수집 댓글</span><div class="figure num">{comments_n}<small>건</small></div></div></div>', unsafe_allow_html=True)
 
-st.markdown(ui.section_header("콘텐츠 성과", sub=f"{len(contents)}건 중 상위 8", right_html='<a href="콘텐츠_성과">전체 →</a>'), unsafe_allow_html=True)
+st.markdown(ui.section_header("콘텐츠 성과", sub=f"{len(contents)}건 중 상위 8", right_html='<a href="콘텐츠성과">전체 →</a>'), unsafe_allow_html=True)
 render_content_table(ctx, limit=8)

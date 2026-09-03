@@ -12,7 +12,7 @@ v2 시절 CSS 블롭(_STYLE_AND_ICONS)과 그 CSS가 그리던 SVG 렌더러들
 (_sparkline_svg, _rank_trend_svg, _render_channel_donut 등)은 디자인
 시스템이 report_dashboard/design_system.py(v3, base.css/mix.css 정본)로
 옮겨가면서 쓸모가 없어졌다 — Task 12에서 제거했다. 지금 이 모듈에 남은
-함수는 데이터 계산(load_campaign_context, _content_rows, _sorted_rows 등)과
+함수는 데이터 계산(load_campaign_context, _content_rows, sorted_content_rows 등)과
 v3 HTML을 그리는 render_* 함수들뿐이고, 전부 report_dashboard.ui/.charts가
 제공하는 v3 컴포넌트 문자열을 조립해서 쓴다.
 
@@ -39,6 +39,16 @@ CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
 
 def _esc(value) -> str:
     return html_lib.escape(str(value))
+
+
+def _safe_href(url) -> str:
+    """`href=`에 그대로 넣기 전에 스킴을 검증한다(M3) — `javascript:` 등으로
+    콘텐츠 URL이 오염되면 클릭 한 번으로 XSS가 되므로, http(s)가 아니면 무해한
+    `#`로 대체한다. 대소문자·앞뒤 공백을 허용(브라우저 URL 파서 관용과 동일)."""
+    s = str(url or "").strip()
+    if s.lower().startswith(("http://", "https://")):
+        return s
+    return "#"
 
 
 SERP_TABS = ("블로그API", "카페API")  # 상위노출 v3 페이지(1_상위노출.py)가 쓰는 SERP 탭 목록.
@@ -149,7 +159,7 @@ def _row_participation_rate(ctx, content: dict, primary_value: int) -> float | N
     return participation_rate(primary_value, vm_c[-1].get("comments_count"))
 
 
-def _sorted_rows(ctx, sort_key: str = "value", *, hide_empty: bool = False) -> list:
+def sorted_content_rows(ctx, sort_key: str = "value", *, hide_empty: bool = False) -> list:
     """행 리스트 표시 순서의 단일 정본 — 페이지(기본 선택)와
     render_content_rows(실제 렌더)가 항상 같은 함수를 써야 "초기 선택 =
     정렬 1위"가 어떤 정렬·필터 조합에서도 어긋나지 않는다(R15).
@@ -182,7 +192,7 @@ def render_content_rows(ctx, selected_id: str | None, *, sort_key: str = "value"
 
     sort_key: value|comments|rate|recent. hide_empty=True면 미수집(pv==0) 행을 아예 뺀다.
     """
-    rows = _sorted_rows(ctx, sort_key, hide_empty=hide_empty)
+    rows = sorted_content_rows(ctx, sort_key, hide_empty=hide_empty)
     vmax = max((r[1] for r in rows), default=0) or 1
     clicked = None
     st.markdown('<div class="lrow-head lrow"><span class="label">콘텐츠</span><span></span><span class="label">추이</span><span class="label r">조회 · 좋아요</span><span class="label r">댓글</span><span class="label r">순위</span><span></span></div>', unsafe_allow_html=True)
@@ -249,7 +259,7 @@ def render_content_detail(ctx, content_id: str) -> None:
         or ui.empty_state("수집된 댓글이 없습니다", "카페·인스타 댓글은 매일 06:30 수집됩니다.")
     st.markdown(
         f'<aside class="detail"><div class="dh"><div><h2>{_esc(c.get("title") or c["url"])}</h2>'
-        f'<div class="meta">{ui.channel_icon(c["channel"])}{ui.CHANNEL_LABEL.get(c["channel"], c["channel"])} · {_esc((c.get("release_at") or "미정")[:10])} 게시 · <a href="{_esc(c["url"])}" target="_blank" rel="noopener noreferrer">원문 열기 ↗</a></div></div></div>'
+        f'<div class="meta">{ui.channel_icon(c["channel"])}{ui.CHANNEL_LABEL.get(c["channel"], c["channel"])} · {_esc((c.get("release_at") or "미정")[:10])} 게시 · <a href="{_esc(_safe_href(c["url"]))}" target="_blank" rel="noopener noreferrer">원문 열기 ↗</a></div></div></div>'
         f'<div class="kpis">{kpis}</div>'
         + ui.section_header(f"{primary_label} 추이", right_html=f'<span class="label">{len(series)}회 수집</span>') + chart
         + rank_block
@@ -298,24 +308,38 @@ def render_share_section(ctx, terms: list[dict], weighted: bool) -> None:
     tot = share.total_share(rows, ours)
     order = [ours] + tot["top_brands"]
     color_of = {b: _SHARE_COLORS[i] for i, b in enumerate(order)}
-    legend = "".join(f'<span><i class="dot" style="background:{color_of[b]}"></i>{_esc(b)}</span>' for b in order) + \
-        f'<span><i class="dot" style="background:{_SHARE_COLORS[3]}"></i>미매칭 슬롯</span>'
+    other_brands_color, unmatched_color = "var(--muted)", _SHARE_COLORS[3]
+    has_other_brands = tot["other_brands_pct"] > 0
+    unit = "점" if weighted else "슬롯"
+    legend = "".join(f'<span><i class="dot" style="background:{color_of[b]}"></i>{_esc(b)}</span>' for b in order)
+    if has_other_brands:
+        legend += f'<span><i class="dot" style="background:{other_brands_color}"></i>기타 브랜드</span>'
+    legend += f'<span><i class="dot" style="background:{unmatched_color}"></i>미매칭 슬롯</span>'
     row_html = []
     for r in rows:
+        # 행별 막대: 표시 밖 매칭 브랜드 합(기타 브랜드); 미매칭 슬롯은 트랙 배경으로 남긴다 —
+        # by_brand에는 애초에 매칭된 브랜드만 들어있으므로(§7), 여기서 뺀 나머지(진짜 미매칭)는
+        # 세그먼트를 아예 안 그려서 stack_bar_html의 빈 트랙 배경이 자연히 그 몫을 표시한다.
         segs = [(color_of[b], r["by_brand"].get(b, 0) / r["denominator"] * 100) for b in order]
         others = sum(v for b, v in r["by_brand"].items() if b not in order)
-        segs.append((_SHARE_COLORS[3], others / r["denominator"] * 100))
+        segs.append((other_brands_color, others / r["denominator"] * 100))
         ours_pct = r["ours_score"] / r["denominator"] * 100
         row_html.append(
             f'<div class="sh"><span class="k">{_esc(r["keyword"])}<small>{r["tab"].replace("API", "")}</small></span>'
             f'{charts.stack_bar_html(segs, ours_index=0)}'
-            f'<span class="v">{ours_pct:.0f}%<small>{_esc(ours)} {r["ours_score"]}/{r["denominator"]}</small></span></div>'
+            f'<span class="v">{ours_pct:.0f}%<small>{_esc(ours)} {r["ours_score"]}/{r["denominator"]}{unit if weighted else ""}</small></span></div>'
         )
-    total_segs = [(color_of[b], tot["by_brand"].get(b, 0)) for b in order] + [(_SHARE_COLORS[3], tot["other_pct"])]
+    total_segs = [(color_of[b], tot["by_brand"].get(b, 0)) for b in order]
+    if has_other_brands:
+        total_segs.append((other_brands_color, tot["other_brands_pct"]))
+    total_segs.append((unmatched_color, tot["unmatched_pct"]))
     lg = "".join(
         f'<div><span><i class="dot" style="background:{color_of[b]}"></i> {_esc(b)}</span><b>{tot["by_brand"].get(b, 0):.1f}%</b></div>'
         for b in order
-    ) + f'<div><span><i class="dot" style="background:{_SHARE_COLORS[3]}"></i> 미매칭 슬롯</span><b>{tot["other_pct"]:.1f}%</b></div>'
+    )
+    if has_other_brands:
+        lg += f'<div><span><i class="dot" style="background:{other_brands_color}"></i> 기타 브랜드</span><b>{tot["other_brands_pct"]:.1f}%</b></div>'
+    lg += f'<div><span><i class="dot" style="background:{unmatched_color}"></i> 미매칭 슬롯</span><b>{tot["unmatched_pct"]:.1f}%</b></div>'
     trend = share.share_trend(ctx["keyword_serp_for_campaign"], ctx["target_keywords"], SERP_TABS, terms)
     trend_html = (
         f'<div class="chart">{charts.area_chart_svg([p for _, p in trend], labels=[a[5:10].replace("-", ".") for a, _ in trend], width=360, height=110, pad_right=50)}</div>'
@@ -324,18 +348,18 @@ def render_share_section(ctx, terms: list[dict], weighted: bool) -> None:
     st.markdown(
         ui.section_header(
             "키워드 점유율",
-            sub=f"키워드×탭 상위 10 슬롯 중 제목에 브랜드가 매칭된 비율 · 분모 {tot['denominator']}",
+            sub=f"키워드×탭 네이버 검색 API 최신순 상위 10 슬롯 중 제목에 브랜드가 매칭된 비율 · 분모 {tot['denominator']}",
             right_html=f'<div class="legend">{legend}</div>',
         )
         + f'<div class="share-grid"><div>{"".join(row_html)}</div><div class="share-side">'
-        f'<div class="label">전체 {tot["denominator"]}슬롯 브랜드 분포</div>{charts.stack_bar_html(total_segs, ours_index=0, height=16)}'
+        f'<div class="label">전체 {tot["denominator"]}{unit} 브랜드 분포</div>{charts.stack_bar_html(total_segs, ours_index=0, height=16)}'
         f'<div class="stack-lg">{lg}</div><div class="label" style="margin-top:18px">{_esc(ours)} 점유율 추이</div>{trend_html}</div></div>',
         unsafe_allow_html=True,
     )
 
 
 def render_serp_columns(ctx, keyword: str) -> None:
-    """실제 SERP 상위 10 두 탭(블로그API·카페API)을 나란히 보여준다.
+    """네이버 검색 API 최신순 상위 10 두 탭(블로그API·카페API)을 나란히 보여준다.
 
     우리 콘텐츠(content_id 있는 행)만 .srow.ours로 강조하고, 목록에 안 잡힌
     10위 밖 매치는 탭마다 별도 노트로 붙인다.
@@ -345,7 +369,7 @@ def render_serp_columns(ctx, keyword: str) -> None:
         rows = latest_keyword_serp(ctx["keyword_serp_for_campaign"], keyword, tab)
         ours_n = sum(1 for r in rows if r["content_id"])
         items = "".join(
-            f'<a class="srow{" ours" if r["content_id"] else ""}" href="{_esc(r["url"])}" target="_blank" rel="noopener noreferrer">'
+            f'<a class="srow{" ours" if r["content_id"] else ""}" href="{_esc(_safe_href(r["url"]))}" target="_blank" rel="noopener noreferrer">'
             f'<span class="r">{r["rank"]}</span><span class="t">{_esc(r.get("title") or r["url"])}</span>'
             f'<span class="src">{"우리 콘텐츠" if r["content_id"] else tab.replace("API", "")}</span></a>'
             for r in rows
@@ -392,18 +416,22 @@ def render_watchlist_rail(ctx, impact_week, impact_rows, score_unit) -> None:
                     d_html = ui.delta(f"— · {span}d", "flat")
             wl.append(f'<div class="wl"><span class="k">{_esc(kw)}<small>{tab.replace("API", "")}</small></span><span class="rk">{ui.rank_badge(best, "—")}</span><div class="spark chart">{spark}</div>{d_html}</div>')
     exposure = exposure_counts_by_channel(ctx["contents"], ctx["all_ranks"])
-    by_ch = channel_distribution(ctx["contents"])
-    ch_html = "".join(
-        f'<div class="ch-row"><span class="n"><i class="dot" style="background:var(--ch-{ch})"></i>{ui.CHANNEL_LABEL.get(ch, ch)}</span>'
-        f'<div class="hbar grow"><i style="width:{round(exposure.get(ch, 0) / n * 100) if n else 0}%;background:var(--ch-{ch})"></i></div>'
-        f'<span class="v num">{exposure.get(ch, 0)}<small>/ {n}</small></span></div>'
-        for ch, n in by_ch.items() if ch != "instagram"
-    )
-    lead = "".join(
-        f'<div class="lead"><span class="n">{r["rank"]}</span><span>{_esc(r["keyword"])}</span>'
-        f'<span class="label">{"NEW" if r["delta"] is None else f"지난주 대비 {r["delta"]:+d}"}</span><span class="v">{r["score"]:,}{score_unit}</span></div>'
-        for r in impact_rows
-    ) if impact_rows else ui.empty_state("아직 집계할 주간 데이터가 없습니다", "다음 주 수집부터 순위 변동과 함께 채워집니다.")
+    # M4: .ch-row 자체 렌더링(채널 키를 var(--ch-{ch}) 스타일 컨텍스트에 미이스케이프로
+    # 꽂던 코드)을 걷어내고 ui.channel_rows에 위임한다 — 이스케이프·포맷을 한 곳으로
+    # 모으고, 여기선 "노출 n / 채널 전체 N" 형태를 위해 numerators/denominators로 넘긴다.
+    by_ch = {ch: n for ch, n in channel_distribution(ctx["contents"]).items() if ch != "instagram"}
+    ch_html = ui.channel_rows(by_ch, numerators=exposure, denominators=by_ch)
+
+    def _lead_row(r) -> str:
+        # I6: 3.11 호환 — f-string 표현식 안에 델리미터와 같은 종류의 따옴표를 중첩하면
+        # (구버전 f-string 파서 제약) SyntaxError이므로 델타 라벨을 먼저 변수로 뺀다.
+        delta_label = "NEW" if r["delta"] is None else f"지난주 대비 {r['delta']:+d}"
+        return (
+            f'<div class="lead"><span class="n">{r["rank"]}</span><span>{_esc(r["keyword"])}</span>'
+            f'<span class="label">{delta_label}</span><span class="v">{r["score"]:,}{score_unit}</span></div>'
+        )
+
+    lead = "".join(_lead_row(r) for r in impact_rows) if impact_rows else ui.empty_state("아직 집계할 주간 데이터가 없습니다", "다음 주 수집부터 순위 변동과 함께 채워집니다.")
     st.markdown(
         ui.section_header("캠페인 키워드 순위", right_html='<span class="label">최고 순위 · 7일 변동(달력)</span>') + "".join(wl)
         + ui.section_header("채널별 네이버 노출", right_html='<span class="label">100위 내</span>')

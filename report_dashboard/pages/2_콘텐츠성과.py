@@ -12,7 +12,7 @@ from report_dashboard.auth import require_role
 from report_dashboard.design_system import inject_design_system
 from report_dashboard.header import render_header
 from report_dashboard.report_common import (
-    CHANNELS, _sorted_rows, load_campaign_context, render_content_detail, render_content_rows, render_export_button,
+    CHANNELS, load_campaign_context, render_content_detail, render_content_rows, render_export_button, sorted_content_rows,
 )
 from report_dashboard.repo import ReportRepo
 from report_dashboard.reporting import average_participation_rate, latest_views, likes_total
@@ -62,7 +62,7 @@ stats = [
 ]
 st.markdown(ui.stat_strip(stats) + '<hr class="rule">', unsafe_allow_html=True)
 
-ordered = _sorted_rows(ctx, sort_key, hide_empty=hide_empty)
+ordered = sorted_content_rows(ctx, sort_key, hide_empty=hide_empty)
 ids = [r[0]["content_id"] for r in ordered]
 selected = st.session_state.get("selected_content_id")
 if selected not in ids:
