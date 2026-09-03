@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 import streamlit as st
@@ -15,12 +14,38 @@ from report_dashboard import ui
 _STATIC = Path(__file__).parent / "static"
 
 
-@lru_cache(maxsize=None)
+_CACHE: dict[str, tuple[float, str]] = {}
+
+
 def static_text(name: str) -> str:
-    return (_STATIC / name).read_text(encoding="utf-8")
+    """static/ 파일을 수정시각(mtime) 기준으로 캐시해서 읽는다.
+
+    lru_cache(영구)였을 때의 배포 사고(2026-09-03): runtime.js만 바뀐 푸시는 .py 변경이 없어
+    스트림릿이 모듈을 다시 읽지 않고, 프로세스가 살아 있는 동안 옛 JS를 계속 내보냈다.
+    mtime이 바뀌면 다시 읽으므로 JS/CSS만 바뀌어도 다음 렌더부터 새 파일이 나간다.
+    """
+    path = _STATIC / name
+    mtime = path.stat().st_mtime
+    hit = _CACHE.get(name)
+    if hit is None or hit[0] != mtime:
+        hit = (mtime, path.read_text(encoding="utf-8"))
+        _CACHE[name] = hit
+    return hit[1]
 
 
-PAGE_CSS = {"exposure": static_text("page-exposure.css"), "content": static_text("page-content.css")}
+class _PageCss:
+    """`frame.PAGE_CSS["exposure"]` 형태를 유지하되 호출 시점에 읽는다(import 시점 고정 금지 — 위 캐시 사고와 같은 이유)."""
+
+    _FILES = {"exposure": "page-exposure.css", "content": "page-content.css"}
+
+    def __getitem__(self, key: str) -> str:
+        return static_text(self._FILES[key])
+
+    def keys(self):
+        return self._FILES.keys()
+
+
+PAGE_CSS = _PageCss()
 
 PARENT_CSS = """
 section.stMain { overflow: hidden !important; }
