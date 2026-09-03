@@ -15,7 +15,16 @@ from report_dashboard.reporting import (
 )
 
 _KW_TABS = ("카페API", "블로그API")   # 요약 키워드 표의 탭 순서(v3 그대로)
-_HERO_LEGEND = '<span class="label"><i class="dot" style="background:var(--ink)"></i> 전체 누적</span>'
+# sub 라벨은 세 모드 모두 그대로 둔다(리뷰 3) — `일별`에서 sub와 범례에 같은 문장을 두 번
+# 쓰던 것을 없앴다. 모드에 따라 바뀌는 것은 **범례 한 곳**이고, 그 문구 정본이 아래 둘이다
+# (`tests/test_runtime_js.py`가 runtime.js 상수와 글자 단위로 같은지 고정한다).
+HERO_SUB = "카페·커뮤니티 조회수"
+HERO_LEGEND_CUM = "전체 누적"
+HERO_DAILY = "일별 증가분(수집 시점 차)"
+_HERO_LEGEND = f'<span class="label" data-hero-legend><i class="dot" style="background:var(--ink)"></i> {HERO_LEGEND_CUM}</span>'
+# 목업 d4-mix.html:48 — 세그먼트는 `.sec-h`의 맨 끝(범례 다음)에 온다.
+_HERO_SEG = ('<div class="seg"><span class="on" data-hero="cum">누적</span>'
+             '<span data-hero="daily">일별</span><span data-hero="channel">채널별</span></div>')
 _RECENT = (
     '<section class="reveal recent"><span>순위 수집 <b>매일 06:00</b></span>'
     '<span>댓글 수집 <b>매일 06:30</b></span><span>인스타 지표 <b>매일 06:30</b></span></section>'
@@ -28,9 +37,10 @@ def build(ctx, campaign) -> frame.FrameContent:
         ctx["contents"], ctx["view_metrics"], ctx["all_ranks"], ctx["all_comments"],
     )
     series = _view_series(ctx)
+    payload = {"series": _payload_series(ctx)}
     body = (
         ui.title_block(campaign["name"], _meta_html(ctx, campaign), _controls_html(ctx["contents"], bool(export_md)))
-        + ui.stat_strip(_stats(ctx, series))
+        + ui.stat_strip(_stats(ctx, series, payload))
         + '<hr class="rule">'
         + _hero_html(series)
         + f'<div class="two">{_keyword_section(ctx)}{_channel_section(ctx)}</div>'
@@ -39,7 +49,7 @@ def build(ctx, campaign) -> frame.FrameContent:
     )
     return frame.FrameContent(
         body_html=body,
-        payload={"series": _payload_series(ctx)},
+        payload=payload,
         export_md=export_md,
         export_filename=f"{campaign['name']}_리포트.md",
     )
@@ -89,8 +99,7 @@ def _controls_html(contents: list[dict], has_md: bool) -> str:
     return views.channel_chips_html(contents) + views.export_btn_html(has_md)
 
 
-def _stats(ctx, series: list[tuple[str, int]]) -> list[str]:
-    dates = [day for day, _ in series]
+def _stats(ctx, series: list[tuple[str, int]], payload: dict) -> list[str]:
     values = [value for _, value in series]
     best, exposed = _best_rank(ctx)
     rank_side = ui.big_rank(best[0], f"{best[1]} · {best[2].replace('API', '')}") if best else ui.spark_box("")
@@ -98,24 +107,30 @@ def _stats(ctx, series: list[tuple[str, int]]) -> list[str]:
     likes = likes_total(ctx["all_metrics"], ctx["contents"])
     comments_n = len(ctx["all_comments"])
     return [
-        views._stat(
+        views.strip_card(
             '누적 조회수 <span class="pill">카페·커뮤니티</span>',
+            "views",
             views.stat_figure("views", f"{values[-1]:,}" if values else "0"),
-            views.spark_html(charts.sparkline_svg(values) if len(values) >= 2 else "", "views"),
-            views.strip_delta_html(dates, values, "views"),
+            series,
+            "카페·커뮤니티 자동 수집",
         ),
-        views._stat(
-            "등록 콘텐츠",
+        # 좋아요 합은 라벨의 `.pill`이다(리뷰 4) — 목업 카드 레이아웃(label / figure / spark /
+        # delta)을 그대로 두면서 `누적 조회수`의 `카페·커뮤니티` pill과 같은 패턴을 쓴다.
+        # figure 안에 두면 `put("contents")`가 캐시한 `<small>`에 좋아요 span이 딸려 들어가
+        # 두 호출의 순서에 결과가 걸린다(그 의존을 없앴다).
+        views.strip_card(
+            f'등록 콘텐츠 <span class="pill">인스타 좋아요 합 <span data-stat="likes">{likes:,}</span></span>',
+            "contents",
             views.stat_figure("contents", f"{len(ctx['contents'])}<small>건</small>"),
-            views.spark_html(),
-            # ui.delta는 텍스트를 이스케이프하므로 좋아요 합 span을 직접 그린다(JS 재계산 자리).
-            f'<span class="delta flat">인스타 좋아요 합 <span data-stat="likes">{likes:,}</span></span>',
+            views.series_points(payload["series"]["contents"]),
+            "등록일 기준 누적",
         ),
-        views._stat(
+        views.strip_card(
             "수집 댓글",
+            "comments",
             views.stat_figure("comments", f"{comments_n}<small>건</small>"),
-            views.spark_html(),
-            ui.delta("카페·인스타 자동 수집"),
+            views.series_points(payload["series"]["comments"]),
+            "카페·인스타 자동 수집",
         ),
         # 4번째 칸은 키워드 기반이라 채널 필터와 무관하다 — data-stat 없이 정적으로 둔다(§4.2).
         ui.stat(
@@ -140,8 +155,8 @@ def _hero_html(series: list[tuple[str, int]]) -> str:
         inner = ui.empty_state("추이를 그릴 데이터가 아직 부족합니다", "수집일이 3일 이상 쌓이면 곡선이 나타납니다.")
     return (
         views.sec_h(
-            "조회수 추이", sub_html='<span class="label">카페·커뮤니티 조회수</span>',
-            right_html=_HERO_LEGEND, style="--i:2", extra_class="enter",
+            "조회수 추이", sub_html=f'<span class="label">{HERO_SUB}</span>',
+            right_html=_HERO_LEGEND + _HERO_SEG, style="--i:2", extra_class="enter",
         )
         + f'<div class="chart hero-chart enter" style="--i:3" data-chart="hero">{inner}</div>'
     )
@@ -197,10 +212,11 @@ def _top_contents_section(ctx) -> str:
 
 
 def _payload_series(ctx) -> dict:
-    """`{"dates": [...], "by_channel": {인스타 제외 채널: [...]}}` (스펙 §4.2).
+    """`{"views": {dates, by_channel}, "contents": {...}, "comments": {...}}` (스펙 §4.2·§11.3).
 
-    선택 채널 합이 `daily_view_series(filtered)`와 정확히 같아야 JS가 다시 그린
-    히어로 곡선·스트립 숫자가 Python이 그린 초기값과 어긋나지 않는다.
+    조회수는 선택 채널 합이 `daily_view_series(filtered)`와 정확히 같아야 JS가 다시 그린
+    히어로 곡선·스트립 숫자가 Python이 그린 초기값과 어긋나지 않는다. 등록 콘텐츠·수집
+    댓글도 같은 `{dates, by_channel}` 모양이라 JS가 `combineSeries` 한 함수로 다 합친다.
     """
     by_id = ctx["contents_by_id"]
     channels = sorted({c["channel"] for c in ctx["contents"] if c["channel"] != "instagram"})
@@ -208,4 +224,8 @@ def _payload_series(ctx) -> dict:
         channel: daily_view_series([m for m in ctx["view_metrics"] if by_id[m["content_id"]]["channel"] == channel])
         for channel in channels
     }
-    return views.payload_series(per_channel)
+    return {
+        "views": views.payload_series(per_channel),
+        "contents": views.payload_series(views.contents_count_series(ctx["contents"])),
+        "comments": views.payload_series(views.comments_count_series(ctx["all_comments"], by_id)),
+    }

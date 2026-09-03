@@ -8,9 +8,9 @@
 """
 from __future__ import annotations
 
-from report_dashboard import ui
+from report_dashboard import charts, share, ui
 from report_dashboard.report_common import _content_rows, _row_participation_rate, plain_section_header
-from report_dashboard.reporting import channel_distribution, delta_over_days
+from report_dashboard.reporting import channel_distribution, delta_over_days, participation_rate
 
 # 평문 `.sec-h` 헤더(R12) — 세 뷰가 `views.sec_h(...)`로 쓴다. 정의가 report_common에
 # 있는 건 순환 import 때문이다(`report_common.watchlist_html`·`impact_block_html`도 같은
@@ -32,6 +32,19 @@ def spark_html(svg: str = "", key: str = "") -> str:
     """`ui.spark_box`와 같은 마크업 + `data-spark`(JS가 시리즈 합으로 다시 그릴 자리)."""
     attr = f' data-spark="{ui.esc(key)}"' if key else ""
     return f'<div class="spark chart"{attr}>{svg}</div>'
+
+
+def spark_variants_html(slot_svg: str, weighted_svg: str) -> str:
+    """점유율 카드의 스파크 두 벌(슬롯·가중) — JS가 `[data-spark-variant]`로 하나만 보여준다(§11.3).
+
+    figure·delta의 `[data-variant]`와 같은 규칙이지만 셀렉터를 나눈 이유는, 점유율 세그먼트
+    토글이 `.spark`를 `[data-variant]`로 잡으면 `.share-grid[data-variant]`·figure span과
+    한 덩어리로 묶여 "스파크만 다른 규칙(빈 칸이면 아예 안 그림)"을 표현할 수 없기 때문이다.
+    """
+    return (
+        f'<div class="spark chart" data-spark-variant="slot">{slot_svg}</div>'
+        f'<div class="spark chart" data-spark-variant="weighted" hidden>{weighted_svg}</div>'
+    )
 
 
 def channel_counts(contents: list[dict], allowed: list[str] | None = None) -> list[tuple[str, int]]:
@@ -87,25 +100,70 @@ def export_btn_html(has_md: bool) -> str:
     return '<span class="btn ghost" data-export aria-disabled="true">내보내기</span>'
 
 
-def strip_delta_html(dates: list[str], values: list[int], key: str = "") -> str:
+def strip_delta_html(dates: list[str], values: list, key: str = "", unit: str = "", extra_attrs: str = "") -> str:
     """스트립 델타 한 칸. `ui.delta`와 같은 마크업 + `data-delta`(JS 재계산 자리).
 
     7일 이상 떨어진 기준점이 없으면 `수집 N일차`(N = 관측 지점 수)로 정직하게 쓴다
     — runtime.js `deltaLabel`과 같은 문구여야 한다(스펙 §5).
+
+    `unit="pt"`는 퍼센트 시리즈(평균 참여율)용이다(§11.3) — 퍼센트의 증감은 퍼센트가
+    아니라 **퍼센트포인트**이므로 `+2.9pt · 7d`로 쓰고 소수 1자리로 반올림한다.
+    반올림 뒤 0이면 `변동 없음`으로 간다(0.04pt를 `+0.0pt`로 쓰지 않는다).
     """
     change = delta_over_days(list(zip(dates, values)))
     if change is None:
         text, direction = f"수집 {len(dates)}일차", "flat"
     else:
         diff, span = change
+        if unit == "pt":
+            diff = round(diff, 1)
+            body = f"{diff:+.1f}pt"
+        else:
+            body = f"{diff:+,}"
         if diff > 0:
-            text, direction = f"+{diff:,} · {span}d", "up"
+            text, direction = f"{body} · {span}d", "up"
         elif diff < 0:
-            text, direction = f"{diff:,} · {span}d", "down"
+            text, direction = f"{body} · {span}d", "down"
         else:
             text, direction = f"변동 없음 · {span}d", "flat"
     attr = f' data-delta="{ui.esc(key)}"' if key else ""
-    return f'<span class="delta {direction}"{attr}>{ui.esc(text)}</span>'
+    return f'<span class="delta {direction}"{attr}{extra_attrs}>{ui.esc(text)}</span>'
+
+
+def series_points(series: dict) -> list[tuple[str, int]]:
+    """payload 시리즈(`{dates, by_channel}`)의 전 채널 합 — 초기 상태(칩 전부 켜짐)의 근거.
+
+    JS `RT.combineSeries(dates, by_channel, 전체 채널)`과 같은 값이어야 한다 — 다르면
+    로드 직후 첫 `applyState()`가 서버가 그린 스파크·델타를 다른 숫자로 갈아버린다.
+    """
+    dates, by_channel = series["dates"], series["by_channel"]
+    return [(day, sum(values[i] for values in by_channel.values())) for i, day in enumerate(dates)]
+
+
+def strip_card(label_html: str, key: str, figure_html: str, points, static_caption: str, *, unit: str = "") -> str:
+    """스파크 + 델타를 실측 시리즈로 채운 스트립 카드(§11.3).
+
+    `points`는 (날짜, 값) 리스트다. 2점 이상이면 스파크(112×30 ink)와 `delta_over_days`
+    델타를, 아니면 **빈 스파크 칸 + 정적 캡션**을 쓴다(v3 §8 정직성 규칙) — 1점짜리
+    시리즈를 직선으로 그려 "추세"처럼 보이게 하지 않는다. `data-spark`·`data-delta`
+    자리는 어느 쪽이든 남겨서 JS가 채널 필터 뒤 다시 그릴 수 있게 한다.
+
+    스파크가 있는 카드 **여섯 칸 전부**가 이 함수를 지난다(리뷰 5) — 손으로 조립한
+    `spark_html(sparkline_svg(...)) + strip_delta_html(...)` 쌍을 남겨두면 그 카드만
+    `data-static`이 없어 JS가 되돌릴 문구를 못 찾는다.
+    """
+    dates = [day for day, _ in points]
+    values = [value for _, value in points]
+    # `data-static`은 JS가 되돌릴 캡션이다 — 채널을 꺼서 시리즈가 2점 미만으로 줄면
+    # runtime.js가 이 문구로 되돌린다(같은 한국어 문구를 JS에 또 적지 않기 위한 장치).
+    static_attr = f' data-static="{ui.esc(static_caption)}"'
+    if len(values) >= 2:
+        spark = spark_html(charts.sparkline_svg(values, width=112, height=30, ink=True), key)
+        delta = strip_delta_html(dates, values, key, unit=unit, extra_attrs=static_attr)
+    else:
+        spark = spark_html("", key)
+        delta = f'<span class="delta flat" data-delta="{ui.esc(key)}"{static_attr}>{ui.esc(static_caption)}</span>'
+    return _stat(label_html, figure_html, spark, delta)
 
 
 def series_by_channel(dates_union: list[str], per_channel: dict[str, list[tuple[str, int]]]) -> dict[str, list[int]]:
@@ -163,3 +221,151 @@ def avg_row_rate(ctx) -> float | None:
         if rate is not None
     ]
     return round(sum(rates) / len(rates), 1) if rates else None
+
+
+# ---------------------------------------------------------------------------
+# §11.3 상단 카드 스파크용 실측 시리즈. 전부 "그날까지의 누적"이라 `series_by_channel`의
+# 직전값 유지 규칙과 맞물려 선택 채널 합(JS `combineSeries`)이 그대로 정답이 된다.
+# 예시 데이터는 만들지 않는다 — 관측이 없으면 빈 시리즈를 돌려주고 호출부가 빈 칸을 그린다.
+# ---------------------------------------------------------------------------
+
+def _cumulative(per_channel_days: dict[str, dict[str, int]]) -> dict[str, list[tuple[str, int]]]:
+    """{채널: {날짜: 그날 발생 건수}} → {채널: [(날짜, 누적 건수)]}(날짜 오름차순)."""
+    out: dict[str, list[tuple[str, int]]] = {}
+    for channel, counts in per_channel_days.items():
+        total, points = 0, []
+        for day in sorted(counts):
+            total += counts[day]
+            points.append((day, total))
+        out[channel] = points
+    return out
+
+
+def _day_of(row: dict, *fields: str) -> str:
+    """첫 번째로 값이 있는 날짜 필드의 `YYYY-MM-DD`. 전부 비면 빈 문자열."""
+    for field in fields:
+        value = row.get(field)
+        if value:
+            return str(value)[:10]
+    return ""
+
+
+def contents_count_series(contents: list[dict]) -> dict[str, list[tuple[str, int]]]:
+    """채널별 (날짜, 누적 콘텐츠 수) — `release_at` 기준, 없으면 `created_at`(§11.3).
+
+    두 필드가 다 비어 있는 콘텐츠는 **어느 날짜에도 넣지 않는다** — 등록일을 모르는
+    콘텐츠를 첫날로 밀어 넣으면 곡선이 실제보다 일찍 시작한 것처럼 보인다.
+    """
+    per: dict[str, dict[str, int]] = {}
+    for content in contents:
+        day = _day_of(content, "release_at", "created_at")
+        if not day:
+            continue
+        bucket = per.setdefault(content["channel"], {})
+        bucket[day] = bucket.get(day, 0) + 1
+    return _cumulative(per)
+
+
+def comments_count_series(comments: list[dict], contents_by_id: dict[str, dict]) -> dict[str, list[tuple[str, int]]]:
+    """채널별 (날짜, 누적 댓글 수) — `commented_at` 기준, 채널은 그 댓글이 달린 콘텐츠의 채널(§11.3)."""
+    per: dict[str, dict[str, int]] = {}
+    for comment in comments:
+        day = _day_of(comment, "commented_at")
+        channel = (contents_by_id.get(comment.get("content_id")) or {}).get("channel")
+        if not day or not channel:
+            continue
+        bucket = per.setdefault(channel, {})
+        bucket[day] = bucket.get(day, 0) + 1
+    return _cumulative(per)
+
+
+def keyword_count_series(target_keyword_rows: list[dict]) -> list[tuple[str, int]]:
+    """(날짜, 누적 추적 키워드 수) — `created_at` 기준. 채널 필터와 무관해 채널 구분이 없다(§11.3).
+
+    보통 키워드를 하루에 다 등록하므로 1점이 나오고, 그러면 호출부가 스파크를 안 그린다.
+    """
+    counts: dict[str, int] = {}
+    for row in target_keyword_rows:
+        day = _day_of(row, "created_at")
+        if not day:
+            continue
+        counts[day] = counts.get(day, 0) + 1
+    return _cumulative({"_": counts})["_"] if counts else []
+
+
+def rate_series(ctx) -> dict:
+    """`{"dates": [...], "by_channel": {채널: {"sum": [...], "n": [...]}}}` (§11.3).
+
+    날짜마다 비인스타 콘텐츠별로 "그날까지 최신 non-auto_instagram 지표 행"을 찾아
+    `participation_rate(views, comments_count)`를 구하고, 계산되는 것만 채널별 합·개수에
+    넣는다. 평균을 미리 내지 않고 (합, 개수)를 보내는 이유는 채널을 껐다 켤 때 JS가
+    `Σsum/Σn`으로 다시 평균할 수 있어야 하기 때문이다 — 채널별 평균의 평균은 틀린다.
+
+    날짜 축은 `view_metrics`의 관측일 합집합이다(참여율은 조회수 관측 시점에만 갱신된다).
+    """
+    dates = sorted({m["captured_at"][:10] for m in ctx["view_metrics"]})
+    tracked = [c for c in ctx["contents"] if c["channel"] != "instagram"]
+    per_content = []
+    for content in tracked:
+        cid = content["content_id"]
+        rows = sorted(
+            (m for m in ctx["all_metrics"] if m["content_id"] == cid and m.get("source") != "auto_instagram"),
+            key=lambda m: m["captured_at"],
+        )
+        per_content.append((content["channel"], rows))
+    by_channel = {channel: {"sum": [], "n": []} for channel in sorted({c["channel"] for c in tracked})}
+    for day in dates:
+        acc = {channel: [0.0, 0] for channel in by_channel}
+        for channel, rows in per_content:
+            upto = [r for r in rows if r["captured_at"][:10] <= day]
+            if not upto:
+                continue
+            rate = participation_rate(upto[-1].get("views") or 0, upto[-1].get("comments_count"))
+            if rate is None:
+                continue
+            acc[channel][0] += rate
+            acc[channel][1] += 1
+        for channel in by_channel:
+            by_channel[channel]["sum"].append(round(acc[channel][0], 3))
+            by_channel[channel]["n"].append(acc[channel][1])
+    return {"dates": dates, "by_channel": by_channel}
+
+
+def rate_points(dates: list[str], by_channel: dict[str, dict], on) -> list[tuple[str, float]]:
+    """선택 채널의 `Σsum/Σn`(소수 1자리). 그날 대상이 0건이면 그 날짜는 **빼버린다**.
+
+    runtime.js `RT.combineRate`와 글자 그대로 같은 규칙이어야 한다(스펙 §5의 패리티 규칙) —
+    0건인 날을 0%로 채우면 아직 참여율을 계산할 수 없던 날이 "참여율 0%"로 보인다.
+    """
+    selected = [channel for channel in by_channel if channel in on]
+    out = []
+    for i, day in enumerate(dates):
+        n = sum(by_channel[channel]["n"][i] for channel in selected)
+        if not n:
+            continue
+        total = sum(by_channel[channel]["sum"][i] for channel in selected)
+        out.append((day, round(total / n, 1)))
+    return out
+
+
+def share_trend_points(
+    serp_rows, keywords, tabs, terms, *, weighted: bool = False, last_n: int = 15,
+) -> list[tuple[str, float, float]]:
+    """수집 배치별 (captured_at, 브랜드 점유율, 캠페인 콘텐츠 점유율) — 슬롯/가중 두 벌용(§11.3).
+
+    `share.share_trend`에는 가중 플래그도 캠페인 점유율도 없어서(슬롯 기준 브랜드
+    점유율만 돌려준다) 배치를 직접 갈라 `keyword_share_rows`+`total_share`를 배치마다
+    돌린다 — 스트립의 "지금 값"과 정확히 같은 집계를 시간축으로 늘린 것이다.
+
+    `last_n`(마지막 15배치)도 `share.share_trend`와 같아야 한다 — 창이 다르면 스트립
+    스파크와 점유율 섹션의 추이 차트가 **같은 지표를 다른 곡선으로** 보여준다.
+    슬롯 기준 브랜드 점유율은 `share.share_trend`와 같은 값이어야 한다(테스트로 고정).
+    """
+    ours = share.ours_brand_of(terms)
+    out = []
+    for at in sorted({r["captured_at"] for r in serp_rows})[-last_n:]:
+        batch = [r for r in serp_rows if r["captured_at"] == at]
+        rows = share.keyword_share_rows(batch, keywords, tabs, terms, weighted=weighted)
+        total = share.total_share(rows, ours)
+        out.append((at, total["ours_pct"], total["campaign_pct"]))
+    return out

@@ -16,6 +16,13 @@ from report_dashboard.ui import esc
 BRAND_NAME = "마녀공장"   # 브랜드별 배포 시 이 상수와 design_system 액센트 4토큰만 바꾼다(스펙 §3.2)
 
 
+def campaign_labels(campaigns: list[dict]) -> dict[str, str]:
+    """셀렉트 라벨(스펙 §11.1): 브랜드는 로고 옆에 이미 있으므로 캠페인명만 쓴다.
+    이름이 겹칠 때만 `브랜드 · 이름`으로 구분한다(라벨→campaign_id 딕셔너리라 충돌 금지)."""
+    names = [c["name"] for c in campaigns]
+    return {(c["name"] if names.count(c["name"]) == 1 else f"{c['brand']} · {c['name']}"): c["campaign_id"] for c in campaigns}
+
+
 def header_links_for(role: str) -> list[tuple[str, str]]:
     return pages_for(role)
 
@@ -47,7 +54,7 @@ def _page_link(title: str, path: str, current: str) -> None:
 
 
 def render_header(role: str, email: str, campaigns: list[dict], *, current: str) -> str | None:
-    labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
+    labels = campaign_labels(campaigns)
     with st.container():
         st.markdown('<span class="hdr-marker"></span>', unsafe_allow_html=True)
         left, mid, right = st.columns([2.4, 4, 3.6], vertical_alignment="center")

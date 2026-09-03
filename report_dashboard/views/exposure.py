@@ -8,7 +8,7 @@ VIEW 탭을 섞지 않는 최고 순위·노출 건수 R11, 브랜드 사전이 
 """
 from __future__ import annotations
 
-from report_dashboard import frame, share, ui, views
+from report_dashboard import charts, frame, share, ui, views
 from report_dashboard.report_common import (
     CHANNELS, SERP_TABS, exposure_rows_html, impact_block_html, serp_columns_html,
     share_legend_html, share_section_html, watchlist_html,
@@ -34,6 +34,7 @@ def build(ctx, campaign, terms) -> frame.FrameContent:
     rows_weighted, tot_weighted = _share_rows_and_total(ctx, kws, terms, ours, weighted=True)
     summary = keyword_rank_summary(ctx["keyword_ranks_for_campaign"], kws)
     collected = _last_collected(ctx)
+    sparks = _strip_sparks(ctx, kws, terms)
     export_md = build_export_markdown(
         f"{campaign['brand']} · {campaign['name']}",
         ctx["contents"], ctx["view_metrics"], ctx["all_ranks"], ctx["all_comments"],
@@ -41,7 +42,7 @@ def build(ctx, campaign, terms) -> frame.FrameContent:
     )
     body = (
         ui.title_block("네이버 상위노출", _meta_html(kws, collected), _controls_html(ctx["contents"], bool(export_md)))
-        + ui.stat_strip(_stats(kws, summary, tot_slot, tot_weighted))
+        + ui.stat_strip(_stats(kws, summary, tot_slot, tot_weighted, sparks))
         + '<hr class="rule">'
         + _share_section(ctx, terms, (rows_slot, tot_slot), (rows_weighted, tot_weighted))
         + _two_html(ctx, kws, summary, collected)
@@ -122,7 +123,29 @@ def _pct(value: float) -> str:
     return f"{value:.1f}<small>%</small>"
 
 
-def _stats(kws, summary, tot_slot, tot_weighted) -> list[str]:
+def _strip_sparks(ctx, kws, terms) -> dict[str, str]:
+    """스트립 스파크 세 칸의 SVG(§11.3). 관측이 2점 미만이면 빈 문자열 — 예시를 그리지 않는다.
+
+    상위노출 페이지는 payload가 없다(채널 필터가 스트립에 영향을 주지 않으므로 JS가
+    다시 계산할 것이 없다) — 그래서 슬롯/가중 두 벌을 **Python이 미리 다 그려두고**
+    세그먼트 토글은 `[data-spark-variant]` 표시만 바꾼다.
+    """
+    def spark(values):
+        return charts.sparkline_svg(values, width=112, height=30, ink=True) if len(values) >= 2 else ""
+
+    serp = ctx["keyword_serp_for_campaign"]
+    keywords_svg = spark([n for _, n in views.keyword_count_series(ctx["target_keyword_rows"])])
+    out = {"keywords": keywords_svg, "brand_slot": "", "brand_weighted": "", "campaign_slot": "", "campaign_weighted": ""}
+    if not (kws and terms and serp):
+        return out
+    for name, weighted in (("slot", False), ("weighted", True)):
+        points = views.share_trend_points(serp, kws, SERP_TABS, terms, weighted=weighted)
+        out[f"brand_{name}"] = spark([ours for _, ours, _ in points])
+        out[f"campaign_{name}"] = spark([campaign for _, _, campaign in points])
+    return out
+
+
+def _stats(kws, summary, tot_slot, tot_weighted, sparks) -> list[str]:
     ranks = _rank_rows(summary)
     best = min((rank for rank, _, _ in ranks), default=None)
     best_kw = next(((kw, tab) for rank, kw, tab in ranks if rank == best), None) if best else None
@@ -137,10 +160,12 @@ def _stats(kws, summary, tot_slot, tot_weighted) -> list[str]:
         brand_delta = ui.delta("브랜드 사전 필요", "flat")
     rank_side = ui.big_rank(best, f"{best_kw[0]} · {best_kw[1].replace('API', '')}") if best_kw else ui.spark_box("")
     return [
-        ui.stat("추적 키워드", f"{len(kws)}<small>개 · {slots}슬롯</small>", ui.spark_box(""),
-                ui.delta("블로그·카페 상위 10", "flat")),
-        views._stat("브랜드 점유율", brand_figure, ui.spark_box(""), brand_delta),
-        views._stat("캠페인 콘텐츠 점유율", campaign_figure, ui.spark_box(""),
+        ui.stat("추적 키워드", f"{len(kws)}<small>개 · {slots}슬롯</small>",
+                views.spark_html(sparks["keywords"], "keywords"), ui.delta("블로그·카페 상위 10", "flat")),
+        views._stat("브랜드 점유율", brand_figure,
+                    views.spark_variants_html(sparks["brand_slot"], sparks["brand_weighted"]), brand_delta),
+        views._stat("캠페인 콘텐츠 점유율", campaign_figure,
+                    views.spark_variants_html(sparks["campaign_slot"], sparks["campaign_weighted"]),
                     ui.delta(f"상위 10 진입 {in_top10}", "flat")),
         ui.stat("상위 100위 내 노출", f"{len(ranks)}<small>건</small>", rank_side,
                 ui.delta("최고 순위" if best else "아직 노출 없음", "flat")),

@@ -98,7 +98,7 @@ def plain_section_header(title: str, sub_html: str = "", right_html: str = "", s
 def load_campaign_context(repo, campaign_id: str, channel_filter: list[str]) -> dict | None:
     """캠페인 데이터 로딩만 한다(위젯 없음 — 캠페인 선택은 header.py, 채널 필터는 각 페이지 컨트롤).
     콘텐츠가 없으면 None. 반환 키: contents/content_ids/all_metrics/view_metrics/all_ranks/all_comments/
-    target_keywords/keyword_ranks_for_campaign/keyword_serp_for_campaign/contents_by_id/all_contents"""
+    target_keywords/target_keyword_rows/keyword_ranks_for_campaign/keyword_serp_for_campaign/contents_by_id/all_contents"""
     all_contents = repo.contents(campaign_id=campaign_id)
     contents = [c for c in all_contents if c["channel"] in channel_filter]
     if not contents:
@@ -108,13 +108,16 @@ def load_campaign_context(repo, campaign_id: str, channel_filter: list[str]) -> 
     view_metrics = [m for m in all_metrics if m.get("source") != "auto_instagram"]
     all_ranks = [r for r in repo.keyword_ranks() if r["content_id"] in content_ids]
     all_comments = [c for c in repo.comments() if c["content_id"] in content_ids]
-    target_keywords = list(dict.fromkeys(k["keyword"] for k in repo.target_keywords(campaign_id=campaign_id)))
+    # 원시 행까지 남긴다 — `views.keyword_count_series`가 `created_at`으로 등록 추이를 그린다(§11.3).
+    target_keyword_rows = repo.target_keywords(campaign_id=campaign_id)
+    target_keywords = list(dict.fromkeys(k["keyword"] for k in target_keyword_rows))
     keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
     keyword_serp_for_campaign = [r for r in repo.keyword_serp() if r["keyword"] in target_keywords]
     return {
         "campaign_id": campaign_id, "contents": contents, "all_contents": all_contents, "content_ids": content_ids,
         "all_metrics": all_metrics, "view_metrics": view_metrics, "all_ranks": all_ranks, "all_comments": all_comments,
-        "target_keywords": target_keywords, "keyword_ranks_for_campaign": keyword_ranks_for_campaign,
+        "target_keywords": target_keywords, "target_keyword_rows": target_keyword_rows,
+        "keyword_ranks_for_campaign": keyword_ranks_for_campaign,
         "keyword_serp_for_campaign": keyword_serp_for_campaign, "contents_by_id": {c["content_id"]: c for c in all_contents},
     }
 

@@ -386,6 +386,44 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 /* 실측: 계정 팝오버 트리거("HW" 이니셜)가 좁아서 두 줄로 줄바꿈됐다 — 최소 폭 확보.
    실제 트리거 버튼 testid는 stPopoverButton(래퍼는 stPopover) — 둘 다 잡아둔다. */
 [data-testid="stPopover"] button, [data-testid="stPopoverButton"] { min-width: 38px; height: 34px; border-radius: 50% !important; padding: 0 8px !important; white-space: nowrap; }
+/* v4.1 헤더 재스킨(스펙 §11.1) — 목업 base.css .hdr 규격: 60px 한 줄, 탭 묶음 s3 필, 셀렉트 34px, 아바타 34px 원 */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) { height: 60px !important; min-height: 60px; padding: 0 28px !important; display: flex; flex-direction: column; justify-content: center; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) > [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] { align-items: center; }
+/* 가운데 탭 묶음: 셀렉트/팝오버가 없는 중첩 가로 블록 = 탭 3개 */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:has([data-testid="stPageLink-NavLink"], .hdr-tab):not(:has([data-testid="stSelectbox"], [data-testid="stPopover"])) {
+    display: inline-flex; align-items: center; min-height: 38px !important; height: 38px; box-sizing: border-box; width: fit-content; margin: 0 auto; gap: 4px !important; padding: 3px; border-radius: 10px; background: var(--s3); }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stSelectbox"], [data-testid="stPopover"])) > div { flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }
+/* 오른쪽: 셀렉트 · 등록 탭 · 아바타 — 우측 정렬, 간격 8 */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:has([data-testid="stSelectbox"]) { justify-content: flex-end; gap: 8px !important; align-items: center; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:has([data-testid="stSelectbox"]) > div { flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stSelectbox"] { width: 200px; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stSelectbox"] [data-baseweb="select"] > div { min-height: 34px !important; height: 34px; font-weight: 500; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stSelectbox"] [data-baseweb="select"] > div > div { padding-top: 0; padding-bottom: 0; line-height: 32px; }
+[data-testid="stPageLink-NavLink"] { min-height: 0 !important; height: 32px; display: inline-flex !important; align-items: center; margin: 0 !important; }
+[data-testid="stPageLink"] { width: auto !important; }
+.hdr-tab { display: inline-flex !important; align-items: center; height: 32px; line-height: 20px; }
+/* 활성 탭(마크다운 span)의 줄상자를 32px로 맞춰 링크 탭(앵커 32px)과 같은 높이에 앉힌다.
+   실측(1.58): stElementContainer가 page_link에 margin ±6px, stMarkdownContainer에 margin-bottom -16px을 걸어
+   열 박스(20px/17px)가 내용(32px)보다 작아져 가운데 정렬이 어긋났다 — 탭 묶음 안에서는 그 음수 마진을 0으로. */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stSelectbox"])) [data-testid="stElementContainer"] { margin: 0 !important; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stSelectbox"])) [data-testid="stMarkdownContainer"] { margin: 0 !important; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stSelectbox"])) [data-testid="stMarkdownContainer"] p { line-height: 32px !important; margin: 0 !important; }
+/* 스트림릿 마크다운 p 여백 제거(헤더 안) */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stMarkdownContainer"] p { margin: 0; }
+/* 아바타 팝오버: 34px 원, 캐럿 제거 */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stPopoverButton"] { width: 34px !important; min-width: 34px !important; height: 34px !important; min-height: 34px !important; padding: 0 !important; background: var(--s3) !important; border: 1px solid var(--border) !important; color: var(--ink-2) !important; font-size: 11px !important; font-weight: 700 !important; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stPopoverButton"] svg { display: none; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stPopoverButton"] > div { display: flex; justify-content: center; }
+/* 헤더와 본문 iframe 사이의 스트림릿 블록 간격(1rem) 제거 — 목업은 헤더 60px 바로 아래 .wrap 패딩 40px */
+[data-testid="stElementContainer"]:has(> iframe[title="st.iframe"][scrolling="auto"]) { margin-top: -16px; }
+/* 툴바(⋮ 테마 메뉴) 아래 바로 헤더가 오도록 본문 상단 여백 제거 */
+section.stMain { padding-top: 0 !important; }
+[data-testid="stMainBlockContainer"] { padding-top: 60px !important; }
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) { top: 60px !important; }
+/* 보이지 않는 선행 요소(스타일 전용 마크다운·높이 0 테마 훅 iframe)가 1rem 간격을 두 번 먹어 헤더가 32px 내려오던 것 */
+[data-testid="stElementContainer"]:has(> iframe[title="st.iframe"][scrolling="no"]), [data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"] > style:only-child) { display: none !important; }
+/* 실측(1.58): 스타일 전용 마크다운은 stElementContainer > stMarkdown > div > stMarkdownContainer > style, 테마 훅 iframe은 scrolling="no"(본문 iframe은 scrolling=True → "auto"). display:none이어도 iframe 스크립트는 실행된다. */
+
 /* 실측: .h-sec(h2)이 stMarkdownContainer h2 규칙(더 높은 명시도)에 밀려 36px로
    계산됐다 — .title h1/.detail h2도 같은 위험이 있어 전부 !important로 못박는다. */
 .sec-h .h-sec, .serp-h .h-sec { font-size: 15px !important; font-weight: 600 !important; margin: 0 !important; padding: 0 !important; line-height: 1.3 !important; }
