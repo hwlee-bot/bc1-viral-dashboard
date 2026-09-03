@@ -51,12 +51,20 @@ def area_chart_svg(values, *, labels=None, width=720, height=200, pad_right=60, 
         n = len(values)
         step = max(1, round(n / 5))
         last = n - 1
+        picked: list[tuple[int, str]] = []
         for i, text in enumerate(labels):
             if not text:
                 continue
             if (i % step == 0 and last - i >= step) or i == last:
-                anchor = "end" if i == last else "middle"
-                label_svg += f'<text class="axis-t" x="{pts[i][0]:.1f}" y="{height - 6}" text-anchor="{anchor}">{escape(str(text))}</text>'
+                # 하루에 여러 번 수집된 시리즈는 같은 날짜 라벨이 연달아 나온다
+                # (배포 실측 "08.31 08.31 08.31 09.02") — 연속 중복은 뒤쪽 하나만 남긴다.
+                if picked and picked[-1][1] == str(text):
+                    picked[-1] = (i, str(text))
+                else:
+                    picked.append((i, str(text)))
+        for i, text in picked:
+            anchor = "end" if i == last else "middle"
+            label_svg += f'<text class="axis-t" x="{pts[i][0]:.1f}" y="{height - 6}" text-anchor="{anchor}">{escape(text)}</text>'
     lx, ly = pts[-1]
     return (
         f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" style="aspect-ratio:{width}/{height}">'

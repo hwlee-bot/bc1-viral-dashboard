@@ -72,8 +72,9 @@ for kw, by_tab in kw_summary.items():
 exposed = sum(1 for by_tab in kw_summary.values() if any(r["rank"] is not None for tab in SERP_TABS for r in by_tab.get(tab, [])))
 
 period = f"{campaign.get('start_date') or '—'} – {campaign.get('end_date') or '진행 중'}"
+_synced = latest_sync_timestamp(all_metrics)   # 상위노출 페이지와 같은 "YYYY-MM-DD HH:MM" 표기
 meta = (f"<b>{ui.esc(period)}</b> · 콘텐츠 {len(contents)}건 · 채널 {len(channel_distribution(contents))}개 · "
-        f"추적 키워드 {len(ctx['target_keywords'])}개 · 마지막 수집 {ui.esc(latest_sync_timestamp(all_metrics) or '없음')}")
+        f"추적 키워드 {len(ctx['target_keywords'])}개 · 마지막 수집 {ui.esc(_synced[:16].replace('T', ' ')) if _synced else '없음'}")
 with title_slot:
     st.markdown(ui.title_block(campaign["name"], meta), unsafe_allow_html=True)
 render_export_button(campaign, ctx, container=export_slot)
