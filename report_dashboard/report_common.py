@@ -34,11 +34,12 @@ import해서 쓰는 용도라 실제로는 이 모듈의 공개 API지만, 이�
 import html as html_lib
 
 from report_dashboard import charts, ui
+from report_dashboard import share
 from report_dashboard.reporting import (
     channel_distribution, delta_over_days, exposure_counts_by_channel,
     keyword_impact_leaderboard, keyword_rank_summary, keyword_weekly_exposure_counts, keyword_weekly_view_sums,
     latest_keyword_serp, latest_matched_ranks, latest_rank_row, latest_views, likes_history,
-    participation_rate, rank_history, week_label,
+    participation_rate, rank_history, week_label, TOP_EXPOSURE_RANK,
 )
 
 CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
@@ -59,6 +60,14 @@ def _safe_href(url) -> str:
 
 
 SERP_TABS = ("블로그API", "카페API")  # 상위노출 v3 페이지(1_상위노출.py)가 쓰는 SERP 탭 목록.
+# 읽어올 SERP 배치(captured_at) 수 상한 — **(키워드, 탭) 쌍마다** 적용된다(v4.2 §12.1). 수집 저장 깊이가
+# `SERP_STORE_DEPTH = 50`으로 올라가 배치당 행이 5배(140 → 700행)가 됐다 — 전 이력을
+# 다 들고 오면 시트 읽기와 메모리가 같은 배로 늘어난다. 화면이 실제로 필요한 것은 두
+# 가지뿐이다: (1) (키워드, 탭)마다 **최신 배치** 하나(`share.latest_batch`), (2) 추이
+# 창 **15배치**(`share.trend_batches`의 `last_n`). 20은 그 15에 여유 5를 둔 값이다 —
+# 깊이 30/50 추이는 `stored_depth`가 얕은 배치를 걸러내므로 창보다 몇 개 더 읽어둬야
+# 곡선이 조용히 짧아지지 않는다. 이 값을 15 이하로 내리면 추이가 잘린다(테스트로 고정).
+SERP_READ_BATCHES = 20
 _SHARE_COLORS = ["var(--accent)", "var(--ch-blog)", "var(--ch-community)", "var(--s3)"]
 
 
@@ -95,10 +104,38 @@ def plain_section_header(title: str, sub_html: str = "", right_html: str = "", s
     )
 
 
+def _recent_serp_batches(rows: list[dict], limit: int = SERP_READ_BATCHES) -> list[dict]:
+    """SERP 행을 **(키워드, 탭) 쌍별로 자기 최신 `limit`개 captured_at 배치**만 남긴다(§12.1 읽기 창).
+
+    창을 전역(전체에서 최신 20개 타임스탬프)으로 잡으면 **수집이 드문 쌍이 통째로
+    사라진다**(fix-2): 다른 키워드가 25일 연속 수집되는 동안 한 번만 잡힌 키워드는
+    그 배치가 전역 20번째보다 옛것이 되어 행이 0개가 되고, 깊이 10에서도 "미수집"으로
+    보인다. 쌍별로 자르면 각 쌍의 최신 배치(`share.latest_batch`)는 무조건 살아남는다.
+
+    배치 경계로 자르는 이유: 행 수로 자르면 한 배치가 중간에서 잘려 그 배치의
+    `stored_depth`가 실제보다 얕게 보이고, 깊이 30/50이 이유 없이 빈 상태가 된다.
+
+    입력 순서는 보존한다(호출부가 순서에 의존하진 않지만 굳이 흔들 이유가 없다).
+    """
+    ats_by_pair: dict[tuple[str, str], set[str]] = {}
+    for r in rows:
+        ats_by_pair.setdefault((r["keyword"], r["search_tab"]), set()).add(r["captured_at"])
+    keep = {
+        (pair, at) for pair, ats in ats_by_pair.items() for at in sorted(ats)[-limit:]
+    }
+    return [r for r in rows if ((r["keyword"], r["search_tab"]), r["captured_at"]) in keep]
+
+
 def load_campaign_context(repo, campaign_id: str, channel_filter: list[str]) -> dict | None:
     """캠페인 데이터 로딩만 한다(위젯 없음 — 캠페인 선택은 header.py, 채널 필터는 각 페이지 컨트롤).
     콘텐츠가 없으면 None. 반환 키: contents/content_ids/all_metrics/view_metrics/all_ranks/all_comments/
-    target_keywords/target_keyword_rows/keyword_ranks_for_campaign/keyword_serp_for_campaign/contents_by_id/all_contents"""
+    target_keywords/target_keyword_rows/keyword_ranks_for_campaign/keyword_serp_for_campaign/contents_by_id/all_contents
+
+    `keyword_serp_for_campaign`은 (키워드, 탭) 쌍마다 자기 최신 `SERP_READ_BATCHES`(20)
+    배치로 제한한다 —
+    저장 깊이 50 때문에 배치당 행이 5배가 됐고, 화면은 쌍별 최신 배치와 15배치 추이
+    창만 쓴다(`_recent_serp_batches` 주석 참고). 순위 추적(`keyword_ranks_*`)은
+    행이 얇아(키워드×탭×매치 콘텐츠) 그대로 전 이력을 읽는다."""
     all_contents = repo.contents(campaign_id=campaign_id)
     contents = [c for c in all_contents if c["channel"] in channel_filter]
     if not contents:
@@ -112,7 +149,7 @@ def load_campaign_context(repo, campaign_id: str, channel_filter: list[str]) -> 
     target_keyword_rows = repo.target_keywords(campaign_id=campaign_id)
     target_keywords = list(dict.fromkeys(k["keyword"] for k in target_keyword_rows))
     keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
-    keyword_serp_for_campaign = [r for r in repo.keyword_serp() if r["keyword"] in target_keywords]
+    keyword_serp_for_campaign = _recent_serp_batches([r for r in repo.keyword_serp() if r["keyword"] in target_keywords])
     return {
         "campaign_id": campaign_id, "contents": contents, "all_contents": all_contents, "content_ids": content_ids,
         "all_metrics": all_metrics, "view_metrics": view_metrics, "all_ranks": all_ranks, "all_comments": all_comments,
@@ -364,20 +401,23 @@ def share_legend_html(tot: dict, ours: str) -> str:
     return "".join(parts)
 
 
-def share_section_html(ctx, terms: list[dict], weighted: bool, *, rows=None, tot=None) -> str:
-    """키워드 점유율(스펙 §7) 본문 — `.share-grid` 또는 `.empty` 하나만 돌려준다.
+def share_section_html(ctx, terms: list[dict], weighted: bool, *, rows=None, tot=None, slots=share.SLOTS_PER_TAB) -> str:
+    """키워드 점유율(스펙 §7 · v4.2 §12) 본문 — `.share-grid` 또는 `.empty` 하나만 돌려준다.
 
-    `.sec-h`는 포함하지 않는다: iframe 본문은 헤더 1개 아래에 슬롯/가중 두 변형을
-    `[data-variant]`로 나란히 심고 JS가 하나만 보여주기 때문(스펙 §4.3). 범례도
-    호출부가 `share_legend_html`로 따로 그린다(헤더가 하나뿐이므로).
+    `.sec-h`는 포함하지 않는다: iframe 본문은 헤더 1개 아래에 깊이 3(10/30/50) × 변형
+    2(슬롯/가중) = **6벌**을 `[data-depth]`·`[data-variant]`로 나란히 심고 JS가 하나만
+    보여주기 때문(스펙 §4.3·§12.2) — 이 함수는 그 6벌 중 **한 벌**이다. 범례도 호출부가
+    `share_legend_html`로 깊이마다 따로 그린다(헤더가 하나뿐이므로).
 
     `rows`·`tot`을 **둘 다** 주면 `share.keyword_share_rows`·`total_share`를 다시
     돌리지 않고 그 값을 쓴다 — 상위노출 뷰는 스트립 숫자·내보내기용으로 이미 변형마다
     계산해 두므로(views/exposure.py) 같은 집계를 두 번 돌릴 이유가 없다. 빈 상태 판정은
     넘긴 값과 무관하게 여기서 다시 한다(조건을 호출부에 복제하지 않는다).
-    """
-    from report_dashboard import share
 
+    `slots`는 깊이(10/30/50)다 — 행 집계·추이 모두 같은 깊이로 돌린다. 깊이를 넘겨받은
+    `rows`·`tot`과 다르게 주면 행 막대와 추이가 갈리므로, 호출부는 같은 깊이로 계산한
+    쌍만 넘겨야 한다(views.exposure가 깊이별로 짝지어 넘긴다).
+    """
     # 한쪽만 넘기면 "넘긴 값"과 "여기서 다시 돌린 값"이 섞여 행 막대와 전체 스택이 다른
     # 집계를 그린다 — 조용히 섞지 않고 호출부를 고치게 한다.
     if (rows is None) != (tot is None):
@@ -388,7 +428,7 @@ def share_section_html(ctx, terms: list[dict], weighted: bool, *, rows=None, tot
             return ui.empty_state("추적 키워드가 없어 점유율을 계산할 수 없습니다", "등록·관리자에서 키워드를 등록하면 다음 수집부터 집계됩니다.")
         return ui.empty_state("점유율 브랜드 사전이 없습니다", "담당자가 등록·관리자 → 키워드 섹션에서 브랜드 사전을 입력하면 집계됩니다.")
     if rows is None or tot is None:
-        rows = share.keyword_share_rows(ctx["keyword_serp_for_campaign"], ctx["target_keywords"], SERP_TABS, terms, weighted=weighted)
+        rows = share.keyword_share_rows(ctx["keyword_serp_for_campaign"], ctx["target_keywords"], SERP_TABS, terms, weighted=weighted, slots=slots)
         tot = share.total_share(rows, ours)
     order, color_of = _share_color_map(tot, ours)
     other_brands_color, unmatched_color = "var(--muted)", _SHARE_COLORS[3]
@@ -396,6 +436,17 @@ def share_section_html(ctx, terms: list[dict], weighted: bool, *, rows=None, tot
     unit = "점" if weighted else "슬롯"
     row_html = []
     for r in rows:
+        head = f'<div class="sh"><span class="k">{_esc(r["keyword"])}<small>{r["tab"].replace("API", "")}</small></span>'
+        if r.get("gated"):
+            # 쌍 단위 수집 범위 게이트(§12.1): 이 쌍은 그 깊이까지 저장돼 있지 않아 집계하지
+            # 않았다 — 0%짜리 막대를 그리면 "경쟁사만 있었다"로 읽힌다. 막대를 아예 빼고
+            # 왜 없는지만 적는다. 가운데 칸은 빈 span으로 남겨 `.sh` 3열 격자를 지킨다.
+            note = f"수집 범위 {r['observed']}위" if r["observed"] else "아직 수집 전"   # 0위는 "수집 안 됨"을 뜻하므로 문구를 바꿈
+            row_html.append(
+                f'{head}<span class="sp"></span>'
+                f'<span class="v"><span class="rank none">{note}</span></span></div>'
+            )
+            continue
         # 행별 막대: 표시 밖 매칭 브랜드 합(기타 브랜드); 미매칭 슬롯은 트랙 배경으로 남긴다 —
         # by_brand에는 애초에 매칭된 브랜드만 들어있으므로(§7), 여기서 뺀 나머지(진짜 미매칭)는
         # 세그먼트를 아예 안 그려서 stack_bar_html의 빈 트랙 배경이 자연히 그 몫을 표시한다.
@@ -404,8 +455,7 @@ def share_section_html(ctx, terms: list[dict], weighted: bool, *, rows=None, tot
         segs.append((other_brands_color, others / r["denominator"] * 100))
         ours_pct = r["ours_score"] / r["denominator"] * 100
         row_html.append(
-            f'<div class="sh"><span class="k">{_esc(r["keyword"])}<small>{r["tab"].replace("API", "")}</small></span>'
-            f'{charts.stack_bar_html(segs, ours_index=0)}'
+            f'{head}{charts.stack_bar_html(segs, ours_index=0)}'
             f'<span class="v">{ours_pct:.0f}%<small>{_esc(ours)} {r["ours_score"]}/{r["denominator"]}{unit if weighted else ""}</small></span></div>'
         )
     total_segs = [(color_of[b], tot["by_brand"].get(b, 0)) for b in order]
@@ -419,7 +469,7 @@ def share_section_html(ctx, terms: list[dict], weighted: bool, *, rows=None, tot
     if has_other_brands:
         lg += f'<div><span><i class="dot" style="background:{other_brands_color}"></i> 기타 브랜드</span><b>{tot["other_brands_pct"]:.1f}%</b></div>'
     lg += f'<div><span><i class="dot" style="background:{unmatched_color}"></i> 미매칭 슬롯</span><b>{tot["unmatched_pct"]:.1f}%</b></div>'
-    trend = share.share_trend(ctx["keyword_serp_for_campaign"], ctx["target_keywords"], SERP_TABS, terms)
+    trend = share.share_trend(ctx["keyword_serp_for_campaign"], ctx["target_keywords"], SERP_TABS, terms, slots=slots)
     trend_html = (
         f'<div class="chart">{charts.area_chart_svg([p for _, p in trend], labels=[a[5:10].replace("-", ".") for a, _ in trend], width=360, height=110, pad_right=50)}</div>'
         if len(trend) >= 3 else ui.empty_state("추이는 수집 3회부터 표시됩니다", f"현재 {len(trend)}회 수집")
@@ -465,10 +515,15 @@ def serp_columns_html(ctx, keyword: str) -> str:
 
     우리 콘텐츠(content_id 있는 행)만 .srow.ours로 강조하고, 목록에 안 잡힌
     10위 밖 매치는 탭마다 별도 노트로 붙인다.
+
+    저장 깊이는 v4.2부터 50(`SERP_STORE_DEPTH`)이지만 **리스트는 상위
+    `TOP_EXPOSURE_RANK`(10)에서 자른다**(§12.1) — 점유율 세그먼트가 깊이를 바꿔도
+    이 리스트는 길어지지 않는다. 자르는 기준은 순위 추적·"10위 밖 우리 콘텐츠"
+    노트와 같은 상수라야 리스트와 노트의 경계가 어긋나지 않는다.
     """
     cols_html = []
     for tab in SERP_TABS:
-        rows = latest_keyword_serp(ctx["keyword_serp_for_campaign"], keyword, tab)
+        rows = [r for r in latest_keyword_serp(ctx["keyword_serp_for_campaign"], keyword, tab) if r["rank"] <= TOP_EXPOSURE_RANK]
         ours_n = sum(1 for r in rows if r["content_id"])
         items = "".join(_serp_row_html(ctx, r, tab) for r in rows) or ui.empty_state("아직 수집 전입니다", "다음 06:00 수집 후 표시됩니다.")
         visible = {r["content_id"] for r in rows if r["content_id"]}

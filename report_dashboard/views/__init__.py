@@ -34,16 +34,39 @@ def spark_html(svg: str = "", key: str = "") -> str:
     return f'<div class="spark chart"{attr}>{svg}</div>'
 
 
-def spark_variants_html(slot_svg: str, weighted_svg: str) -> str:
-    """점유율 카드의 스파크 두 벌(슬롯·가중) — JS가 `[data-spark-variant]`로 하나만 보여준다(§11.3).
+SHARE_VARIANTS = (("slot", False), ("weighted", True))   # (`data-variant` 값, weighted 플래그)
+
+
+def depth_variant_cells(render, *, depths=share.DEPTHS) -> str:
+    """깊이 × 변형 조합마다 `render(depth, variant, hidden_attr)`을 부르고 이어 붙인다(§12.2).
+
+    첫 조합(가장 얕은 깊이 · 슬롯)만 보이고 나머지는 `hidden`이다 — 초기 화면이
+    `runtime.js`의 기본 상태(`depth="10"`, `variant="slot"`)와 어긋나지 않게 하는 정본이다.
+    """
+    out = []
+    for i, depth in enumerate(depths):
+        for j, (variant, _) in enumerate(SHARE_VARIANTS):
+            out.append(render(depth, variant, "" if i == 0 and j == 0 else " hidden"))
+    return "".join(out)
+
+
+def spark_variants_html(svg_of, *, depths=share.DEPTHS) -> str:
+    """점유율 카드의 스파크 6벌(깊이 3 × 슬롯·가중) — JS가 `[data-depth]`·`[data-spark-variant]`로 하나만 보여준다(§11.3·§12.2).
+
+    `svg_of`는 `(depth, variant) -> svg` 매핑(dict)이다. 집계할 수 없는 조합은 빈 문자열을
+    주면 빈 스파크 칸이 남는다 — 1점짜리 시리즈나 없는 깊이를 직선으로 그려 "추세"처럼
+    보이게 하지 않는다(v3 §8 정직성 규칙).
 
     figure·delta의 `[data-variant]`와 같은 규칙이지만 셀렉터를 나눈 이유는, 점유율 세그먼트
     토글이 `.spark`를 `[data-variant]`로 잡으면 `.share-grid[data-variant]`·figure span과
     한 덩어리로 묶여 "스파크만 다른 규칙(빈 칸이면 아예 안 그림)"을 표현할 수 없기 때문이다.
     """
-    return (
-        f'<div class="spark chart" data-spark-variant="slot">{slot_svg}</div>'
-        f'<div class="spark chart" data-spark-variant="weighted" hidden>{weighted_svg}</div>'
+    return depth_variant_cells(
+        lambda depth, variant, hidden: (
+            f'<div class="spark chart" data-depth="{depth}" data-spark-variant="{variant}"{hidden}>'
+            f'{svg_of.get((depth, variant), "")}</div>'
+        ),
+        depths=depths,
     )
 
 
@@ -350,6 +373,7 @@ def rate_points(dates: list[str], by_channel: dict[str, dict], on) -> list[tuple
 
 def share_trend_points(
     serp_rows, keywords, tabs, terms, *, weighted: bool = False, last_n: int = 15,
+    slots: int = share.SLOTS_PER_TAB,
 ) -> list[tuple[str, float, float]]:
     """수집 배치별 (captured_at, 브랜드 점유율, 캠페인 콘텐츠 점유율) — 슬롯/가중 두 벌용(§11.3).
 
@@ -360,12 +384,15 @@ def share_trend_points(
     `last_n`(마지막 15배치)도 `share.share_trend`와 같아야 한다 — 창이 다르면 스트립
     스파크와 점유율 섹션의 추이 차트가 **같은 지표를 다른 곡선으로** 보여준다.
     슬롯 기준 브랜드 점유율은 `share.share_trend`와 같은 값이어야 한다(테스트로 고정).
+
+    `slots`(깊이)도 마찬가지다 — 창은 `share.trend_batches`가 정본이라 깊이가 10보다
+    깊으면 `stored_depth < slots`인 옛 배치가 두 경로에서 똑같이 빠진다(§12.1).
     """
     ours = share.ours_brand_of(terms)
     out = []
-    for at in sorted({r["captured_at"] for r in serp_rows})[-last_n:]:
+    for at in share.trend_batches(serp_rows, keywords, tabs, last_n=last_n, slots=slots):
         batch = [r for r in serp_rows if r["captured_at"] == at]
-        rows = share.keyword_share_rows(batch, keywords, tabs, terms, weighted=weighted)
+        rows = share.keyword_share_rows(batch, keywords, tabs, terms, weighted=weighted, slots=slots)
         total = share.total_share(rows, ours)
         out.append((at, total["ours_pct"], total["campaign_pct"]))
     return out

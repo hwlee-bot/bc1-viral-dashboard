@@ -100,9 +100,17 @@
     });
     return out;
   }
+  /* 표시 규칙의 단일 정본(스펙 §12.2) — 요소가 가진 `variant`/`depth`/`basis` 키가
+     **전부** 현재 상태와 같을 때만 보인다. 한 축만 가진 요소(예: `.lead-block[data-basis]`,
+     `.legend[data-depth]`)는 나머지 축을 따지지 않으므로 예전 동작이 그대로 유지된다.
+     `data-spark-variant`는 호출부에서 `variant` 키로 넘긴다(셀렉터만 다른 같은 축). */
+  const VIS_KEYS = ["variant", "depth", "basis"];
+  function visibleUnder(state, attrs) {
+    return VIS_KEYS.every((k) => attrs[k] === undefined || attrs[k] === state[k]);
+  }
   // `_` 접두사는 "Python 정본이 아니라 포맷 재현용"이라는 뜻 — 노출은 node 테스트가 고정하기 위해서다.
   const RT = {
-    combineSeries, combineRate, deltaOverDays, orderRows, avgRate, fmtInt, deltaLabel, dailyDiff,
+    combineSeries, combineRate, deltaOverDays, orderRows, avgRate, fmtInt, deltaLabel, dailyDiff, visibleUnder,
     _fmtG: fmtG, _pyRound: pyRound, _pyRound1: pyRound1, _safeLabel: safeLabel, _pickLabels: pickLabels,
     _knownChannels: knownChannels, _CH_LABEL: CH_LABEL,
   };
@@ -170,6 +178,7 @@
     hideEmpty: !!$(".chip.on[data-toggle='hide-empty']"),
     kw: pick(".kw-chips .chip.on[data-kw]", "kw", null),
     variant: pick(".seg span.on[data-variant]", "variant", "slot"),
+    depth: pick(".seg span.on[data-depth]", "depth", "10"),
     basis: pick(".seg span.on[data-basis]", "basis", "count"),
     hero: pick(".seg span.on[data-hero]", "hero", "cum"),
     selected: pick("tr.is-sel[data-cid]", "cid", null),
@@ -289,16 +298,21 @@
     /* --- 상위노출: 키워드 칩 · 점유율 변형 · 파급력 기준 · 꺼진 채널의 ours 강조 --- */
     $$(".kw-chips .chip[data-kw]").forEach((c) => c.classList.toggle("on", c.dataset.kw === state.kw));
     $$(".serp[data-kw]").forEach((b) => (b.hidden = b.dataset.kw !== state.kw));
-    $$("[data-variant]").forEach((el) => {
-      if (el.matches(".seg span")) el.classList.toggle("on", el.dataset.variant === state.variant);
-      else el.hidden = el.dataset.variant !== state.variant;
+    /* 변형(슬롯/가중)·깊이(10/30/50)·파급력 기준(건수/조회수)은 같은 규칙으로 켜고 끈다 —
+       요소가 가진 축이 전부 맞아야 보인다(`RT.visibleUnder`). 점유율 스파크만 셀렉터가
+       `data-spark-variant`로 갈라져 있어(Python `spark_variants_html` 주석 참고) 여기서
+       `variant` 축으로 되돌려 넘긴다. */
+    $$("[data-variant],[data-depth],[data-basis],[data-spark-variant]").forEach((el) => {
+      const d = el.dataset, attrs = {};
+      if (d.variant !== undefined) attrs.variant = d.variant;
+      if (d.sparkVariant !== undefined) attrs.variant = d.sparkVariant;
+      if (d.depth !== undefined) attrs.depth = d.depth;
+      if (d.basis !== undefined) attrs.basis = d.basis;
+      const on = RT.visibleUnder(state, attrs);
+      if (el.matches(".seg span")) el.classList.toggle("on", on);
+      else el.hidden = !on;
     });
-    // 점유율 스파크는 `[data-variant]`와 셀렉터를 나눠 뒀다(Python `spark_variants_html` 주석 참고).
-    $$("[data-spark-variant]").forEach((el) => (el.hidden = el.dataset.sparkVariant !== state.variant));
-    $$("[data-basis]").forEach((el) => {
-      if (el.matches(".seg span")) el.classList.toggle("on", el.dataset.basis === state.basis);
-      else el.hidden = el.dataset.basis !== state.basis;
-    });
+    $$("[data-depth-label]").forEach((el) => (el.textContent = state.depth));
     $$(".srow.ours[data-ch], .beyond[data-ch]").forEach((el) => el.classList.toggle("is-off", !state.on.has(el.dataset.ch)));
     renderCharts();
   }
@@ -455,6 +469,8 @@
       if (kw) { state.kw = kw.dataset.kw; return applyState(); }
       const v = t.closest(".seg span[data-variant]");
       if (v) { state.variant = v.dataset.variant; return applyState(); }
+      const dp = t.closest(".seg span[data-depth]");
+      if (dp) { state.depth = dp.dataset.depth; return applyState(); }
       const b = t.closest(".seg span[data-basis]");
       if (b) { state.basis = b.dataset.basis; return applyState(); }
       const hero = t.closest(".seg span[data-hero]");
