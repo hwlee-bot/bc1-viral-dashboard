@@ -89,9 +89,11 @@ a {{ color: inherit; text-decoration: none; }}
 """
 
 # mix.css 전문(D4 공용 컴포넌트) + base.css의 공용 타이포·차트·모션 블록 + 페이지별
-# <style> 추가분(p-exposure/p-content/p-admin) + 행 리스트 오버레이 규칙(v2의
-# .vr-card-marker :has() 패턴 계승). 목업 파일에서 그대로 복사한 문자열 리터럴 —
+# <style> 추가분(p-exposure/p-content/p-admin). 목업 파일에서 그대로 복사한 문자열 리터럴 —
 # 런타임에 파일을 읽지 않는다(배포 미러에 원본 파일이 없을 수 있어서).
+# v3의 `.lrow*` 오버레이 블록(행마다 st.container + 행 클릭용 투명 st.button)은 Task 7에서
+# 삭제했다 — 콘텐츠 리스트는 iframe 안 `<table>`(report_common.content_list_rows_html)이 그리고
+# 행 클릭은 JS가 처리하므로, 스트림릿 컨테이너를 :has()로 잡아 꾸미던 규칙엔 대상이 없다.
 COMPONENT_CSS = """
 /* ===== base.css: 공용 타이포 ===== */
 .num { font-variant-numeric: tabular-nums; }
@@ -317,19 +319,6 @@ td .spark svg { width: 84px; height: 22px; display: block; }
 .hs .n small { color: var(--muted); font-size: 11.5px; }
 .hs .mono { font-size: 12px; color: var(--ink-2); }
 .role { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: var(--s3); color: var(--ink-2); }
-
-/* 콘텐츠 행 리스트(표 대신 행마다 st.container — 행 클릭용 투명 st.button 오버레이가
-   필요해서). v2의 .vr-card-marker :has() 패턴을 그대로 계승. */
-.lrow-marker { display: none; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lrow-marker) { position: relative; border-bottom: 1px solid var(--hair); }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lrow-marker) [data-testid="stButton"] { position: absolute; inset: 0; margin: 0; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lrow-marker) [data-testid="stButton"] > button { width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lrow-marker.is-sel) { background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); }
-.lrow { display: grid; grid-template-columns: minmax(160px, 34%) 32px 96px 1fr 48px 72px 20px; gap: 8px; align-items: center; padding: 11px 8px 11px 10px; font-size: 13px; }
-.lrow .t { display: flex; flex-direction: column; gap: 2px; } .lrow .t small { color: var(--muted); font-size: 11.5px; }
-.lrow .r { text-align: right; white-space: nowrap; } .lrow .chev { color: var(--muted); font-size: 12px; text-align: right; }
-.lrow.is-empty { opacity: .55; }
-.lrow-head { padding: 0 8px 8px 10px; border-bottom: 1px solid var(--hair); }
 """
 
 # 스트림릿 자체 요소 재스킨(실서버 Task 13에서 testid 실측 후 보정 가능).
@@ -347,6 +336,11 @@ CHROME_CSS = """
 [data-testid="stMainBlockContainer"] { max-width: 1256px; padding: 0 28px 96px !important; }
 [data-testid="stHeading"] h1, [data-testid="stHeading"] h2, [data-testid="stHeading"] h3 { font-family: var(--font) !important; }
 [data-testid="stMarkdownContainer"] a { color: inherit; text-decoration: none !important; }
+/* 스트림릿이 마크다운 컨테이너에 자기 폰트 스택을 걸어서 우리 마크다운 조각(헤더·등록·관리자)이
+   Pretendard를 잃는다 — 컨테이너 **자체**에만 걸고 자식은 상속으로 받게 한다. `:where(*)` 같은
+   자손 셀렉터로 내리면 COMPONENT_CSS의 `.mono`(주입 순서상 앞, 명시도 동급)가 뒤에 오는 이
+   규칙에 밀려 JetBrains Mono가 죽는다 — 상속은 자식 요소 자신의 규칙에 항상 진다(Task 7). */
+[data-testid="stMarkdownContainer"] { font-family: var(--font) !important; }
 /* 위젯 재스킨 — 스펙 §4 칩/세그먼트/인풋 규격 */
 [data-testid="stSelectbox"] [data-baseweb="select"] > div { background: var(--s2) !important; border: 1px solid var(--border-2) !important; border-radius: var(--r-btn) !important; min-height: 34px; font-size: 13px; }
 [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input, [data-testid="stTextArea"] textarea { background: var(--s2) !important; border: 1px solid var(--border-2) !important; border-radius: var(--r-btn) !important; color: var(--ink) !important; font-size: 13px; }

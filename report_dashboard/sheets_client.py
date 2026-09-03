@@ -11,6 +11,11 @@
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
+# Sheets API가 간헐적으로 429/5xx를 돌려준다(2026-09-02 댓글 수집 503, 09-03 배포본
+# 첫 화면 HttpError). googleapiclient의 num_retries는 429·5xx·소켓 오류에만
+# 지수 백오프로 재시도하고 4xx는 즉시 올린다 — 권한·범위 오류는 그대로 드러난다.
+_RETRIES = 3
+
 
 def build_sheets_service(credentials_info: dict):
     """서비스 계정 자격증명으로 Sheets 서비스 객체를 만든다.
@@ -36,14 +41,14 @@ class SheetsClient:
     def list_tabs(self) -> list[str]:
         meta = self.service.spreadsheets().get(
             spreadsheetId=self.spreadsheet_id
-        ).execute()
+        ).execute(num_retries=_RETRIES)
         return [s["properties"]["title"] for s in meta.get("sheets", [])]
 
     def create_tab(self, title: str) -> None:
         self.service.spreadsheets().batchUpdate(
             spreadsheetId=self.spreadsheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": title}}}]},
-        ).execute()
+        ).execute(num_retries=_RETRIES)
 
     def append_rows(self, tab: str, rows: list[list[str]]) -> None:
         self.service.spreadsheets().values().append(
@@ -52,12 +57,12 @@ class SheetsClient:
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body={"values": rows},
-        ).execute()
+        ).execute(num_retries=_RETRIES)
 
     def read_column_a(self, tab: str) -> list[str]:
         resp = self.service.spreadsheets().values().get(
             spreadsheetId=self.spreadsheet_id, range=f"{tab}!A:A"
-        ).execute()
+        ).execute(num_retries=_RETRIES)
         # 빈 행은 [] 로 오므로 인덱싱 대신 길이를 확인한다.
         return [row[0] if row else "" for row in resp.get("values", [])]
 
@@ -70,5 +75,5 @@ class SheetsClient:
         rng = f"{tab}!{cell_range}" if cell_range else tab
         resp = self.service.spreadsheets().values().get(
             spreadsheetId=self.spreadsheet_id, range=rng
-        ).execute()
+        ).execute(num_retries=_RETRIES)
         return resp.get("values", [])
