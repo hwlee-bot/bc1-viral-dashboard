@@ -1,4 +1,4 @@
-"""상위노출·콘텐츠 성과 두 페이지가 공유하는 화면 구성요소.
+"""상위노출·콘텐츠 성과 두 페이지가 공유하는 화면 구성요소 (v3).
 
 원래 하나의 pages/1_리포트.py 안에 있던 CSS·렌더 함수를(2026-09-02, 메뉴
 분리로) 이 모듈로 옮겼다 — 상위노출/콘텐츠 성과가 각자 다른 사이드바
@@ -8,1115 +8,41 @@
 같은 페이지 전용 로직은 안 들어있다 — 그건 호출하는 각 페이지 파일이
 스스로 해야 한다(보안 이유는 각 페이지 파일 상단 주석 참고).
 
-함수 이름에 언더스코어(_esc, _render_stat_row 등)가 붙어있는 건 원래
-페이지 파일 안에서만 쓰던 이름을 그대로 옮겨서다 — 모듈 경계를 넘어
-명시적으로 import해서 쓰는 용도라 실제로는 이 모듈의 공개 API지만,
-이름을 전부 바꾸면 거대한 파일 전체에 오타 위험만 커져서 이번엔
-이름은 그대로 두고 옮기기만 했다.
+v2 시절 CSS 블롭(_STYLE_AND_ICONS)과 그 CSS가 그리던 SVG 렌더러들
+(_sparkline_svg, _rank_trend_svg, _render_channel_donut 등)은 디자인
+시스템이 report_dashboard/design_system.py(v3, base.css/mix.css 정본)로
+옮겨가면서 쓸모가 없어졌다 — Task 12에서 제거했다. 지금 이 모듈에 남은
+함수는 데이터 계산(load_campaign_context, _content_rows, _sorted_rows 등)과
+v3 HTML을 그리는 render_* 함수들뿐이고, 전부 report_dashboard.ui/.charts가
+제공하는 v3 컴포넌트 문자열을 조립해서 쓴다.
+
+함수 이름에 언더스코어가 붙어있는 건(_esc, _content_rows 등) 원래 페이지
+파일 안에서만 쓰던 이름을 그대로 옮겨서다 — 모듈 경계를 넘어 명시적으로
+import해서 쓰는 용도라 실제로는 이 모듈의 공개 API지만, 이름을 전부
+바꾸면 거대한 파일 전체에 오타 위험만 커져서 이번엔 이름은 그대로 두고
+옮기기만 했다.
 """
 
 import html as html_lib
 
 import streamlit as st
 
-from report_dashboard.design_system import inject_base_fonts
+from report_dashboard import charts, ui
 from report_dashboard.reporting import (
-    build_export_markdown, latest_keyword_serp, latest_matched_ranks, latest_views, likes_history,
-    participation_rate, week_label,
+    build_export_markdown, channel_distribution, delta_over_days, exposure_counts_by_channel,
+    keyword_rank_summary, latest_keyword_serp, latest_matched_ranks, latest_rank_row, latest_views,
+    likes_history, participation_rate, rank_history, week_label,
 )
 
 CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
-
-_CHANNEL_ICON = {
-    "blog": "naver", "cafe": "naver", "youtube": "youtube",
-    "instagram": "instagram", "community": "community",
-}
 
 
 def _esc(value) -> str:
     return html_lib.escape(str(value))
 
 
-_STYLE_AND_ICONS = """
-<style>
-:root {
-  --vr-page: #f9f9f7;
-  --vr-surface: #ffffff;
-  --vr-ink: #0b0b0b;
-  --vr-ink-2: #52514e;
-  --vr-ink-muted: #898781;
-  --vr-hairline: #e1e0d9;
-  --vr-border: rgba(11,11,11,0.10);
-  --vr-border-strong: rgba(11,11,11,0.14);
-  --vr-accent: #2a78d6;
-  --vr-accent-bright: #6da7ec;
-  --vr-accent-soft: #eaf1fb;
-  --vr-accent-wash: rgba(42,120,214,0.08);
-  --vr-good: #0ca30c;
-  --vr-good-soft: #e6f6e6;
-  --vr-warning: #b9790a;
-  --vr-warning-soft: #fdf0d9;
-  --vr-critical: #d03b3b;
-  --vr-critical-soft: #fbe8e8;
-  --vr-radius: 12px;
-  --vr-ease: cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* ---- v2 리뉴얼: 마녀공장 마스터 브랜드 옐로우 앰비언트 헤더 ---- */
-.vr-amb {
-  container-type: inline-size; /* 히어로 타이틀 폰트 크기를 뷰포트가 아니라
-    이 카드 자체 폭 기준(cqw)으로 잡기 위해 — 사이드바 유무 등으로 카드
-    실제 폭이 뷰포트와 달라지는 경우에도 항상 카드에 맞게 꽉 찬다. */
-  position: relative; padding: 20px 26px 34px; margin: -1rem -1rem 0;
-  background: linear-gradient(135deg, #ffe066 0%, #fbc02d 55%, #f2a30f 100%);
-  overflow: hidden;
-}
-/* 포스터풍 필름 그레인 — 레퍼런스(핀터레스트 "I AM POWERFUL" 포스터류)의
-   질감을 살리려고 기존 5%보다 훨씬 진하게(18%) 올렸다. 평평한 그라디언트가
-   아니라 인쇄물 같은 까끌한 질감이 나야 포스터 느낌이 산다. */
-.vr-amb::after {
-  content: ""; position: absolute; inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.18'/%3E%3C/svg%3E");
-  mix-blend-mode: overlay; pointer-events: none;
-}
-.vr-amb-top { display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 1; }
-.vr-amb-brand { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(30,22,0,0.75); }
-.vr-amb-brand span { color: #7a4a00; }
-.vr-amb-user { font-size: 10px; letter-spacing: 0.02em; color: rgba(30,22,0,0.5); }
-/* ---- 잡지 표지풍 히어로 타이틀(Bebas Neue, 2026-09-02 → 왼쪽 정렬·
-   레퍼런스 반영으로 재조정) ----
-   레퍼런스(핀터레스트 "I AM POWERFUL" 포스터)처럼 왼쪽 정렬, 상단에서
-   여백을 두고 아래쪽으로 내려서 앉힌다. text-shadow 두 겹으로 인쇄
-   오프셋(스크린프린트 겹인쇄) 느낌의 입체감을 준다 — 사진이 없는 배경이라
-   레퍼런스의 톤(빨강 위 빨강 잔상)을 그대로 못 쓰는 대신, 같은 잉크색
-   계열의 오프셋 그림자로 같은 "겹쳐 찍힌" 인상을 낸다. */
-.vr-amb-title {
-  position: relative; z-index: 1; margin: 18px 0 -4px; padding: 0;
-  font-family: var(--vr-font-display); font-size: clamp(3.2rem, 21cqw, 8rem);
-  line-height: 0.82; font-weight: 400; letter-spacing: 0.01em;
-  color: #1e1600; text-align: left;
-  text-shadow: 3px 4px 0 rgba(122,74,0,0.22), 8px 10px 18px rgba(30,22,0,0.16);
-}
-
-/* ---- 스탯 카드 4분할 줄(2026-09-02 신규) ----
-   manyo.madup.app 레퍼런스의 "3개 평범한 카드 + 1개 어두운 히어로 카드"
-   구성을 그대로 가져왔다. 4열 그리드, 좁은 화면에선 2열로 줄어든다. */
-.vr-stat-row { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; margin: 18px 0 4px; }
-@media (max-width: 900px) { .vr-stat-row { grid-template-columns: repeat(2, 1fr); } }
-.vr-stat-tile {
-  background: var(--vr-surface); border: 1px solid var(--vr-border); border-radius: 16px;
-  padding: 16px 18px; display:flex; flex-direction:column; gap: 4px;
-  box-shadow: 0 24px 48px -32px rgba(30,25,15,0.16);
-}
-.vr-stat-tile-label { font-size:11px; font-weight:700; color:var(--vr-ink-muted); }
-.vr-stat-tile-value { font-size:26px; font-weight:800; color:var(--vr-ink); letter-spacing:-0.01em; font-variant-numeric: tabular-nums; }
-.vr-stat-tile-unit { font-size:12px; color:var(--vr-ink-muted); margin-left:2px; }
-/* 히어로 타일 — 나머지 3개와 색·형태를 확 다르게 해서 "이번 주 제일 중요한
-   숫자 하나"에 시선이 먼저 가게 한다(레퍼런스와 같은 의도). */
-.vr-stat-tile--hero {
-  background: linear-gradient(155deg, #1e1600 0%, #33270a 100%); border: none;
-  flex-direction:row; align-items:center; justify-content:space-between; gap:10px;
-}
-.vr-stat-tile--hero .vr-stat-tile-label { color: rgba(255,255,255,0.55); }
-.vr-stat-tile--hero .vr-stat-tile-value { color:#fff; font-size:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.vr-stat-tile-hero-text { display:flex; flex-direction:column; gap:3px; min-width:0; }
-.vr-stat-tile-hero-sub { font-size:11px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
-.vr-stat-tile-ring { flex:none; }
-
-/* ---- 겹치는 히어로 카드: 도넛 + 상위노출 랭크 ----
-   .vr-hero를 직접 여는 div로 쓰지 않는다 — Streamlit은 st.markdown 호출마다
-   독립된 DOM 컨테이너를 만들어서, 한 번의 st.markdown에서 연 <div>가 이후
-   st.subheader나 다른 st.markdown 호출(별도 컨테이너)까지 감쌀 수 없다.
-   대신 기존 .vr-card-marker와 같은 패턴 — st.container(border=True) 안에
-   숨김 마커를 심고 그 stVerticalBlock 전체를 :has()로 스코프한다. */
-.vr-hero-marker { display:none; }
-/* 예전엔 음수 top margin으로 이 카드가 앰버 헤더 위로 살짝 겹쳐 보이게
-   했었는데, 헤더와 이 카드 사이에 "캠페인"·"채널 필터" 네이티브 위젯이
-   끼어들면서 카드가 그 위젯들을 덮어버리는 버그가 됐다(실측 확인 — 정적
-   프리뷰는 네이티브 위젯을 안 잡아서 못 보였다). 그래서 일반 여백으로 뺐다. */
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-hero-marker) {
-  position: relative; z-index: 2; margin: 4px 0 0 !important;
-  background: #fff; border-radius: 16px; padding: 22px 26px 20px;
-  box-shadow: 0 12px 32px -12px rgba(30,25,15,0.18), 0 1px 0 rgba(30,25,15,0.04);
-}
-.vr-donut-block { display: flex; align-items: center; gap: 22px; padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid #f0ede8; }
-.vr-donut-wrap { position: relative; flex: none; width: 96px; height: 96px; }
-.vr-donut-wrap svg { width: 100%; height: 100%; }
-.vr-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.vr-donut-center b { font-size: 22px; font-weight: 800; color: #1c1a16; line-height: 1; }
-.vr-donut-center span { font-size: 9.5px; color: var(--vr-ink-muted); font-weight: 600; margin-top: 2px; }
-.vr-donut-legend { display: flex; flex-direction: column; gap: 7px; flex: 1; }
-.vr-donut-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--vr-ink-2); }
-.vr-donut-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.vr-donut-legend-num { margin-left: auto; color: var(--vr-ink); font-weight: 700; font-variant-numeric: tabular-nums; }
-.vr-donut-legend-pct { color: var(--vr-ink-muted); font-weight: 500; font-size: 11px; min-width: 34px; text-align: right; }
-
-/* ---- 주간 키워드 파급력: 캠페인 키워드끼리 서로 비교한 리더보드 ---- */
-.vr-kwimpact-list { display:flex; flex-direction:column; gap:12px; margin: 4px 0 8px; }
-.vr-kwimpact-top { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
-.vr-kwimpact-ordinal { font-family: var(--vr-font-display); font-size:13px; font-weight:800; color:var(--vr-ink-muted); min-width:24px; }
-.vr-kwimpact-item--top .vr-kwimpact-ordinal { color: var(--vr-accent); }
-.vr-kwimpact-keyword { font-size:13px; font-weight:700; color:var(--vr-ink); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.vr-kwimpact-delta { flex:none; font-size:11px; font-weight:700; padding:1px 7px; border-radius:999px; font-variant-numeric: tabular-nums; }
-.vr-kwimpact-delta--up { color:var(--vr-good); background:var(--vr-good-soft); }
-.vr-kwimpact-delta--down { color:var(--vr-critical); background:var(--vr-critical-soft); }
-.vr-kwimpact-delta--flat { color:var(--vr-ink-muted); background:var(--vr-page); }
-.vr-kwimpact-delta--new { color:var(--vr-accent); background:var(--vr-accent-soft); }
-.vr-kwimpact-score { flex:none; font-size:12.5px; font-weight:700; color:var(--vr-ink); font-variant-numeric: tabular-nums; }
-.vr-kwimpact-track { position:relative; height:8px; background:var(--vr-accent-soft); border-radius:999px; overflow:hidden; }
-.vr-kwimpact-fill { position:absolute; inset:0; border-radius:999px; background:linear-gradient(90deg, var(--vr-accent), var(--vr-accent-bright)); }
-
-/* ---- 캠페인 키워드 순위: 탭당 전체 목록 ---- */
-/* 2026-09-02 상위노출 페이지가 별도 메뉴로 분리되면서 이 컴포넌트는 이제
-   2:1 비대칭 레이아웃의 좁은 우측 레일(약 320~380px)에서만 쓰인다. 원래
-   3열 grid는 그 절반쯤 되는 폭(예전 리포트 페이지 전체 폭)을 가정하고
-   만들어져서, 지금 폭에서는 칸당 100px 남짓이라 "클렌징오일" 같은
-   키워드가 세 줄로 쪼개져 읽을 수 없었다(팀장님 실측 확인, 2026-09-02).
-   같은 레일의 다른 리스트형 컴포넌트(.vr-explist, 상위노출 순위 리스트)와
-   맞춰 세로 스택으로 바꾼다. */
-.vr-kw-grid { display: flex; flex-direction: column; gap: 10px; }
-.vr-kw-card { border-radius: 12px; background: var(--vr-page); padding: 16px 18px; }
-.vr-kw-name { font-size: 14px; font-weight: 700; color: var(--vr-ink); margin-bottom: 12px; }
-.vr-kw-tab-group { margin-bottom: 14px; }
-.vr-kw-tab-group:last-child { margin-bottom: 0; }
-.vr-kw-tab-head { font-size: 11px; font-weight: 700; color: var(--vr-ink-2); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
-.vr-kw-tab-head .vr-kw-tab-count { font-weight: 500; color: var(--vr-ink-muted); text-transform: none; letter-spacing: 0; }
-.vr-kw-tab-empty { color: var(--vr-ink-muted); font-size: 12px; padding: 4px 0; }
-/* 매치된 콘텐츠는 세로 목록 — 키워드 카드 자체가 이제 3열 grid(.vr-kw-grid)라
-   카드 폭이 좁아서, 이 안에서 또 다열 grid를 걸면 항목이 너무 빽빽해진다. */
-.vr-kw-content-row {
-  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; margin-bottom: 6px;
-  background: var(--vr-surface); border-radius: 8px; font-size: 12px; color: var(--vr-ink-2);
-  min-width: 0;
-}
-.vr-kw-content-row:last-child { margin-bottom: 0; }
-.vr-kw-content-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.vr-kw-content-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.vr-kw-content-date { color: var(--vr-ink-muted); font-size: 10.5px; }
-
-/* ---- 참여율(.vr-card-stats 뉴모피즘 패널을 2분할한 아래쪽 절반 — 위 조회수와
-   같은 폰트 크기로 통일했다) ---- */
-.vr-stat-secondary { flex:1; box-sizing:border-box; display:flex; flex-direction:column; align-items:center;
-  justify-content:center; width:100%; text-align: center; border-top:1px solid rgba(11,11,11,0.07); }
-.vr-stat-secondary b { display: block; font-size: 26px; font-weight: 800; color: var(--vr-ink); letter-spacing: -0.01em; }
-.vr-stat-secondary b.empty { color: #c7c2b6; font-size: 22px; }
-.vr-stat-secondary span { display: block; font-size: 11px; color: var(--vr-ink-muted); font-weight: 600; margin-top: 2px; }
-
-[data-testid="stCaptionContainer"] p { color: var(--vr-ink-muted) !important; }
-
-/* -- 채널별 상위노출 랭크 리스트 --------------------------------------- */
-.vr-rank-list { display:flex; flex-direction:column; gap:14px; margin: 4px 0 8px; }
-.vr-rank-item { display:grid; grid-template-columns: 32px 92px 1fr auto; align-items:center; gap:12px; }
-.vr-rank-ordinal { font-family: var(--vr-font-display); font-size:13px; font-weight:800; color:var(--vr-ink-muted); text-align:center; font-variant-numeric: tabular-nums; }
-.vr-rank-item--top .vr-rank-ordinal { color: var(--vr-accent); }
-.vr-rank-chan { display:flex; align-items:center; gap:7px; }
-.vr-channel-badge { display:flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:7px; background:var(--vr-surface); border:1px solid var(--vr-border); flex:none; }
-.vr-channel-badge svg { width:15px; height:15px; display:block; }
-.vr-rank-chan-name { font-size:12.5px; color:var(--vr-ink-2); white-space:nowrap; }
-.vr-rank-track { position:relative; height:10px; background:var(--vr-accent-soft); border-radius:999px; overflow:hidden; }
-.vr-rank-fill { position:absolute; inset:0; border-radius:999px; background:linear-gradient(90deg, var(--vr-accent), var(--vr-accent-bright)); }
-.vr-rank-item--top .vr-rank-fill { box-shadow: 0 0 0 1px var(--vr-accent-wash) inset; }
-.vr-rank-figures { display:flex; align-items:baseline; gap:5px; justify-content:flex-end; min-width:74px; }
-.vr-rank-value { font-size:17px; font-weight:700; color:var(--vr-ink); font-variant-numeric: tabular-nums; }
-.vr-rank-unit { font-size:11px; color:var(--vr-ink-muted); }
-.vr-rank-share { font-size:10.5px; color:var(--vr-ink-muted); text-align:right; margin-top:2px; grid-column:4; font-variant-numeric: tabular-nums; }
-
-/* -- 키워드 SERP 리스트(상위노출 탭 메인, 2026-09-02 콘텐츠 중심→키워드
-   중심 전환) — 키워드를 검색하면 실제로 뭐가 노출되는지(경쟁 게시글 포함)를
-   순위 오름차순으로 보여주고, 그중 우리 콘텐츠(.vr-serp-row--ours)만 색을
-   다르게 강조한다. */
-.vr-serp-panel { margin-bottom: 20px; }
-.vr-serp-panel:last-child { margin-bottom: 0; }
-.vr-serp-head { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
-.vr-serp-keyword { font-size:13.5px; font-weight:700; color:var(--vr-ink); }
-.vr-serp-tab { font-size:11px; color:var(--vr-ink-muted); font-weight:600; }
-.vr-serp-list { display:flex; flex-direction:column; gap:2px; }
-/* 실제 배포 화면에서 실측 확인(2026-09-03): Streamlit이 마크다운 안의
-   <a>에 자체 링크 스타일(파란색+밑줄)을 걸어두는데, 그게 이 규칙의
-   text-decoration/color보다 우선순위가 높아서 그냥 지나쳤다(display:grid
-   같은 다른 속성은 정상 적용됨 — 딱 이 두 속성만 밀림, getComputedStyle로
-   확인). !important로 이긴다 — 다른 카드 컴포넌트에서도 쓰는 관례. */
-.vr-serp-row {
-  display:grid; grid-template-columns: 34px 1fr; align-items:center; gap:10px;
-  padding:9px 10px; border-radius:10px; text-decoration:none !important; color:inherit !important;
-  transition: background 0.15s var(--vr-ease);
-}
-.vr-serp-row:hover { background: var(--vr-page); }
-.vr-serp-row--ours { background: var(--vr-accent-soft); border-left:3px solid var(--vr-accent); padding-left:7px; }
-.vr-serp-row--ours:hover { background: var(--vr-accent-soft); }
-.vr-serp-rank { font-family: var(--vr-font-display); font-size:12.5px; font-weight:800; color:var(--vr-ink-muted) !important; text-align:center; font-variant-numeric: tabular-nums; }
-.vr-serp-row--ours .vr-serp-rank { color: var(--vr-accent) !important; }
-.vr-serp-title { font-size:13px; color:var(--vr-ink-2) !important; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-.vr-serp-row--ours .vr-serp-title { font-weight:700; color:var(--vr-ink) !important; }
-.vr-serp-empty { color:var(--vr-ink-muted); font-size:12px; padding:4px 0; }
-/* 순위는 잡혔는데(collect_campaign_ranks가 매치) 상위 N건 SERP 리스트엔
-   없을 때(예: 18위) 쓰는 텍스트 폴백 — 팀장님 요청 그대로("OOO 몇위"). */
-.vr-serp-note { font-size:12px; color:var(--vr-accent); font-weight:600; padding:6px 2px 0; }
-
-/* -- 콘텐츠 카드: marker로 이 카드의 stVerticalBlock만 스코프해서 강화 ----
-   목업(redesign-v2-report.html) 그대로: 흰 배경 + 헤어라인 보더 + 채널별
-   상단 3px 컬러바(밴드 헤더 아님) + 우상단 작은 로고 배지. */
-.vr-card-marker { display:none; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker) {
-  position: relative !important; /* 카드 전체를 덮는 링크 오버레이(.vr-card-link)의 기준 */
-  border-radius: 14px !important;
-  border: 1px solid #ece8e0 !important;
-  border-top: 3px solid #c9a86a !important;
-  padding: 18px 20px !important;
-  overflow: hidden;
-  transition: transform 0.2s var(--vr-ease), box-shadow 0.2s var(--vr-ease);
-}
-.vr-card-link { position: absolute; inset: 0; z-index: 1; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--blog) { border-top-color: #3a5ac4 !important; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--instagram) { border-top-color: #d6478a !important; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--community) { border-top-color: #8a6fd6 !important; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--youtube) { border-top-color: #e2453e !important; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker):hover {
-  transform: translateY(-2px);
-  box-shadow: 0 14px 28px -16px rgba(30,25,15,0.22);
-}
-/* 조회수 0(아직 수집 전) 카드 — 목록 맨 아래로 정렬된 것과 짝을 맞춰
-   옅게 처리해서 "데이터 없음"을 한눈에 구분한다. */
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--empty) { opacity: 0.55; }
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker--empty):hover { opacity: 0.85; }
-.vr-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:4px; }
-.vr-card-title { font-family: var(--vr-font-display); font-size:15px; font-weight:700; line-height:1.35; color: var(--vr-ink); }
-.vr-card-logo { flex:none; width:26px; height:26px; border-radius:7px; overflow:hidden; display:block; }
-.vr-card-logo svg { width:100%; height:100%; display:block; }
-.vr-card-meta { font-size:11px; color:var(--vr-ink-muted); font-weight:500; margin-bottom:14px; }
-
-/* -- 콘텐츠 성과 요약 카드(그리드 한 칸) + 팝업 트리거 --------------------
-   2026-09-02: 콘텐츠마다 전체 상세를 인라인으로 펼치던 걸 카드형 요약 +
-   클릭 시 팝업(st.dialog)으로 바꿨다(manyo.madup.app 레퍼런스, 팀장님
-   요청 — 24건이 한 화면에 1~2개씩만 보여서 훑어보기 어렵다는 피드백).
-   .vr-card-marker의 채널 컬러바·호버 리프트는 그대로 재사용한다. 다만
-   오버레이가 <a>(.vr-card-link, 원문 URL)가 아니라 실제 st.button이다 —
-   팝업을 여는 Python 콜백은 HTML만으로 못 부르기 때문. 다이얼로그 내부의
-   전체 상세 카드에는 이 버튼이 없고, 이 요약 카드에는 .vr-card-link
-   앵커가 없어서 두 오버레이 규칙은 서로 간섭하지 않는다. */
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker) [data-testid="stButton"] {
-  position: absolute; inset: 0; z-index: 1; margin: 0;
-}
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker) [data-testid="stButton"] button {
-  width: 100%; height: 100%; opacity: 0; border: none; padding: 0; cursor: pointer;
-}
-.vr-perfmini-row { display:flex; align-items:center; gap:12px; margin: 2px 0 10px; }
-.vr-perfmini-metric { flex:none; }
-.vr-perfmini-metric b { display:block; font-size:22px; font-weight:800; color:var(--vr-ink); letter-spacing:-0.01em; }
-.vr-perfmini-metric b.empty { color:#c7c2b6; font-size:18px; }
-.vr-perfmini-metric span { display:block; font-size:10.5px; color:var(--vr-ink-muted); font-weight:600; margin-top:1px; }
-.vr-perfmini-spark { flex:1 1 auto; min-width:0; }
-.vr-perfmini-spark svg { display:block; width:100%; height:34px; }
-.vr-perfmini-foot { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--vr-ink-muted); }
-.vr-perfmini-comments { display:inline-flex; align-items:center; gap:3px; }
-
-/* -- 조회수 스파크라인 + 순위 추이(왼쪽, 세로로 쌓임) + 조회수/참여율
-   뉴모피즘 스탯 카드(오른쪽) ---------------------------------------------
-   .vr-metrics-panel은 flex row, 기본 align-items:stretch 덕분에 오른쪽
-   .vr-card-stats 높이가 왼쪽 .vr-metrics-charts(그래프 2개)의 실제 콘텐츠
-   높이에 자동으로 맞춰진다. 폭도 같은 flex 컬럼을 공유하므로 위 스파크라인과
-   아래 순위 추이 그래프가 항상 같은 렌더 폭을 갖는다. */
-/* position+z-index로 카드 전체 링크 오버레이(.vr-card-link, z-index:1) 위로
-   끌어올린다 — 안 그러면 그래프 위 호버 포인트(.vr-pt-hit)가 그 투명 <a>에
-   가려져서 커서를 올려도 절대 안 잡힌다(실측으로 발견, 2026-09-02). 이
-   영역 안에서는 카드 링크 클릭(원문 열기)보다 그래프 호버가 우선한다. */
-.vr-metrics-panel { position:relative; z-index:2; display:flex; align-items:stretch; gap:20px; margin: 0 2px 0; }
-.vr-metrics-charts { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; gap:12px; }
-.vr-chart-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
-.vr-chart-title { font-size:11px; font-weight:700; color:var(--vr-ink-2); }
-.vr-chart-title-meta { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:600; color:var(--vr-ink-2); }
-/* 그래프별 "카드 속 카드" — 조회수/상위노출 그래프를 각각 뉴모피즘 박스로
-   감싸서(오른쪽 스탯 카드와 같은 이중 그림자) 두 그래프의 영역이 한눈에
-   구분되게 한다. */
-.vr-chart-box {
-  background: var(--vr-page); border-radius: 12px; padding: 12px 16px 10px;
-  box-shadow: 4px 4px 8px rgba(30,25,15,0.09), -4px -4px 8px rgba(255,255,255,0.85),
-    inset 0 0 0 1px rgba(255,255,255,0.4);
-}
-.vr-sparkline svg, .vr-rank-trend svg { display:block; width:100%; height:auto; aspect-ratio: 640 / 72; }
-.vr-gridline { stroke: var(--vr-hairline); stroke-width:1; }
-/* 일별 데이터포인트 호버 라벨(조회수/좋아요·상위노출 추이 그래프 공용) — JS
-   없이 CSS만으로: 점마다 투명 히트서클을 크게 깔고, 그 위에 커서를 올리면
-   숨어있던 라벨(값 텍스트 + 배경 pill)이 나타난다. 라벨을 늘 켜두면
-   데이터가 많을 때 숫자가 빽빽해 보여서(팀장님 피드백) 기본은 숨김. */
-.vr-pt-hit { fill: transparent; }
-.vr-pt-label { opacity: 0; transition: opacity 0.12s var(--vr-ease); pointer-events: none; }
-.vr-pt:hover .vr-pt-label { opacity: 1; }
-.vr-pt-label-bg { fill: #1c1a16; opacity: 0.92; }
-/* font-size는 실제 화면 px가 아니라 이 SVG의 viewBox(640x72) 기준 단위다 —
-   차트가 실제로는 카드 폭(보통 640px보다 훨씬 좁게, 예: ~350~450px)로
-   줄어들어 그려지므로 그 축소 비율만큼 라벨도 같이 작아진다. 10px로
-   냈다가 팀장님이 "숫자가 안 보인다"고 확인해줘서(2026-09-02) 훨씬 큰
-   24로 올림 — 실제 화면에서 대략 13~16px 정도로 나온다. */
-.vr-pt-label-text { font-size: 24px; font-weight: 700; fill: #fff; text-anchor: middle; dominant-baseline: middle; font-variant-numeric: tabular-nums; }
-/* 뉴모피즘 "카드 속 카드" — 배경이 페이지톤(--vr-page)에 가깝고 그림자가
-   낮은 채도라 뉴모피즘의 이중 그림자(밝음/어두움)가 잘 먹는다. 글래스모피즘은
-   블러로 비칠 화려한 배경이 이 자리엔 없어서(흰 카드 위 흰 여백) 대신 골랐다.
-   내부는 flex-direction:column에 .vr-stat-num/.vr-stat-secondary가 각각
-   flex:1이라 박스가 정확히 반씩 나뉘고, 두 절반 안에서 각자 가운데 정렬된다. */
-.vr-card-stats {
-  flex:none; width:136px; margin:2px 0 0; box-sizing:border-box; display:flex; flex-direction:column;
-  padding:8px 16px; border-radius:14px; background: var(--vr-page);
-  box-shadow: 5px 5px 10px rgba(30,25,15,0.10), -5px -5px 10px rgba(255,255,255,0.9),
-    inset 0 0 0 1px rgba(255,255,255,0.5);
-}
-/* 그래프 영역과 댓글 영역 사이 구분선 — 카드속카드(.vr-card-stats)가 이
-   선 바로 위까지 자리잡도록 위쪽 여백을 작게 준다. */
-.vr-metrics-divider { border:none; border-top:1px solid var(--vr-hairline); margin: 4px 2px 12px; }
-.vr-stat-num { flex:1; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
-.vr-stat-num b { display:block; font-size:26px; font-weight:800; color:var(--vr-ink); letter-spacing:-0.01em; }
-.vr-stat-num span { display:block; font-size:11px; color:var(--vr-ink-muted); font-weight:600; margin-top:2px; }
-.vr-stat-num.empty b { color:#c7c2b6; font-size:22px; }
-
-.vr-rank-badge { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:20px; padding:0 5px; background:var(--vr-accent-soft); color:var(--vr-accent); font-size:11px; font-weight:700; border-radius:6px; font-variant-numeric: tabular-nums; }
-.vr-rank-trend-miss { fill:var(--vr-surface); stroke:var(--vr-ink-muted); stroke-width:1.5; }
-.vr-rank-trend-sep { stroke:var(--vr-hairline); stroke-width:1; stroke-dasharray:3 3; }
-
-/* -- 댓글 -------------------------------------------------------------- */
-.vr-comments { display:flex; flex-direction:column; gap:5px; margin: 4px 2px 2px; }
-.vr-comment-line { font-size:12.5px; color:var(--vr-ink-2); }
-.vr-comment-line .vr-nick { color:var(--vr-ink-muted); }
-
-/* -- 내보내기 버튼 ------------------------------------------------------ */
-div[data-testid="stDownloadButton"] button { border-radius: 8px !important; font-weight:600 !important; }
-div[data-testid="stDownloadButton"] button:hover { border-color: var(--vr-accent) !important; color: var(--vr-accent) !important; }
-
-/* -- 스크롤 진입 모션 ----------------------------------------------------
-   목업 기획 때 정한 "스크롤하면 카드가 떠오르는" 효과. Streamlit의
-   st.markdown(unsafe_allow_html=True)은 보안상 <script>를 실행하지 않아서
-   IntersectionObserver 기반 JS는 못 쓴다 — 대신 순수 CSS 스크롤 기반
-   애니메이션(animation-timeline: view())으로 같은 효과를 낸다. 이 CSS
-   기능 자체를 못 읽는 브라우저에서는 @supports가 걸러줘서 카드가 그냥
-   평소처럼(불투명 상태로) 바로 보인다 — 못 읽는다고 안 보이는 사고는 없다. */
-@supports (animation-timeline: view()) {
-  @keyframes vr-scroll-in {
-    from { opacity: 0; transform: translateY(18px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-card-marker),
-  div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .vr-hero-marker),
-  .vr-kw-card {
-    animation: vr-scroll-in linear both;
-    animation-timeline: view();
-    animation-range: entry 0% entry 35%;
-  }
-
-  /* 조회수·상위노출 그래프 선이 스크롤에 맞춰 "그려지는" 모션 — stroke-dasharray/
-     stroke-dashoffset을 폴리라인 실제 길이(_polyline_length)로 맞춰두고
-     dashoffset을 0으로 애니메이션한다. 시작값은 인라인 속성(stroke-dashoffset)이
-     그대로 0% 키프레임 역할을 하므로 @keyframes에는 to만 적는다. */
-  @keyframes vr-line-draw {
-    to { stroke-dashoffset: 0; }
-  }
-  .vr-line-draw {
-    animation: vr-line-draw linear both;
-    animation-timeline: view();
-    animation-range: entry 10% entry 70%;
-  }
-}
-</style>
-<svg width="0" height="0" style="position:absolute;">
-  <defs>
-    <symbol id="vr-logo-naver" viewBox="0 0 24 24">
-      <rect width="24" height="24" rx="6" fill="#03C75A"/>
-      <path d="M14.4 6.5v6.2L9.7 6.5H6.5v11h3.1v-6.2l4.7 6.2h3.2v-11h-3.1z" fill="#fff"/>
-    </symbol>
-    <symbol id="vr-logo-instagram" viewBox="0 0 24 24">
-      <rect x="1" y="1" width="22" height="22" rx="6" fill="#fff" stroke="#DD2A7B" stroke-width="1.6"/>
-      <circle cx="12" cy="12" r="4.6" fill="none" stroke="#DD2A7B" stroke-width="1.6"/>
-      <circle cx="17.6" cy="6.4" r="1.15" fill="#DD2A7B"/>
-    </symbol>
-    <symbol id="vr-logo-youtube" viewBox="0 0 24 24">
-      <rect width="24" height="24" rx="6" fill="#FF0000"/>
-      <path d="M9.8 8.3l6 3.7-6 3.7z" fill="#fff"/>
-    </symbol>
-    <symbol id="vr-logo-community" viewBox="0 0 24 24">
-      <rect width="24" height="24" rx="6" fill="#E1E0D9"/>
-      <path d="M6 8.5h12v6.2H11l-2.6 2.3v-2.3H6z" fill="none" stroke="#52514E" stroke-width="1.4" stroke-linejoin="round"/>
-    </symbol>
-    <linearGradient id="vr-grad-line-v2" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#2b3a67"/>
-      <stop offset="100%" stop-color="#b8792e"/>
-    </linearGradient>
-    <linearGradient id="vr-grad-rank" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#2a78d6"/>
-      <stop offset="100%" stop-color="#6da7ec"/>
-    </linearGradient>
-    <filter id="vr-glow-v2" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="5" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-  </defs>
-</svg>
-"""
-
-
-def _inject_design_system() -> None:
-    inject_base_fonts()
-    st.markdown(_STYLE_AND_ICONS, unsafe_allow_html=True)
-
-
-def _polyline_length(points: list[tuple[float, float]]) -> float:
-    """선 그리기(stroke-dashoffset) 애니메이션의 시작값으로 쓸 실제 경로 길이.
-
-    stroke-dasharray/stroke-dashoffset을 이 길이로 맞춰야 애니메이션이 정확히
-    선 끝에서 끝나고, 짧게 잘리거나 남는 부분 없이 깔끔하게 그려진다."""
-    total = 0.0
-    for (x1, y1), (x2, y2) in zip(points, points[1:]):
-        total += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-    return total
-
-
-def _hover_point_group(x: float, y: float, label: str, dot_svg: str, *, width: float, height: float) -> str:
-    """호버하면 라벨(값)이 뜨는 데이터포인트 하나 — 조회수·좋아요 스파크라인과
-    상위노출 추이 그래프가 공유하는 조각. 실제 마커(dot_svg)는 항상 그려진
-    상태로 두고, 그 위에 투명 히트서클(실제 점보다 훨씬 커서 커서를 정확히
-    점 위에 안 올려도 잡힌다)만 얹어 호버 대상을 넓힌다. 라벨은 배경 pill
-    위에 그려서 선·그리드 위에서도 읽힌다. 위쪽 여백이 모자라면(그래프 맨
-    위 근처 점) 라벨을 점 아래로 내려서 뷰박스 밖으로 잘리지 않게 한다.
-
-    치수(pill 크기·오프셋)는 전부 .vr-pt-label-text의 font-size(24, viewBox
-    단위)에 맞춰 잡았다 — 차트가 실제 화면에서 640 viewBox보다 훨씬 좁게
-    그려지는 걸 감안해 처음보다 크게 키운 값(2026-09-02, 팀장님이 "숫자가
-    안 보인다"고 확인). 라벨 폭이 커진 만큼 첫/마지막 점(x가 뷰박스 가장자리
-    바로 근처)에서 pill이 좌우로 잘릴 수 있어, 점 자체(히트서클·마커)는
-    실제 x에 그대로 두고 라벨 <g>의 x만 뷰박스 안쪽으로 클램프한다."""
-    label_y = y - 34 if y - 34 > 24 else y + 48
-    pill_w = max(56, len(label) * 16 + 24)
-    label_x = min(max(x, pill_w / 2 + 4), width - pill_w / 2 - 4)
-    return (
-        f'<g class="vr-pt">{dot_svg}'
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="16" class="vr-pt-hit"/>'
-        f'<g class="vr-pt-label" transform="translate({label_x:.1f},{label_y:.1f})">'
-        f'<rect x="{-pill_w / 2:.1f}" y="-16" width="{pill_w:.1f}" height="32" rx="8" class="vr-pt-label-bg"/>'
-        f'<text x="0" y="2" class="vr-pt-label-text">{_esc(label)}</text>'
-        f"</g></g>"
-    )
-
-
-def _sparkline_svg(metrics: list[dict], width: int = 640, height: int = 72, value_field: str = "views") -> str:
-    """실측 시계열만 그린다 — 데이터 없는 구간에 추세를 지어내지 않는다.
-
-    value_field로 무엇을 그릴지 고른다(기본 조회수). 인스타 카드는 좋아요
-    시계열을 넘긴다(Task 8) — 이 함수 자체는 값의 의미를 모른다.
-
-    선 색은 남색(#2b3a67, 지난 구간)에서 앰버(#b8792e, 최근 구간)로 흐르는
-    그라디언트 — 승인된 v2 목업(redesign-v2-report.html) 그대로. 은은한
-    글로우 언더레이 한 번 더 그려서 흰 배경에서도 살짝 번지는 느낌만 준다.
-
-    데이터포인트마다 호버하면 그날 값이 뜬다(팀장님 요청, 2026-09-02) —
-    라벨을 항상 켜두면 콘텐츠가 오래될수록(포인트가 많아질수록) 숫자가
-    빽빽해 보이므로 기본은 숨김, 커서를 올린 지점만 보여준다.
-    """
-    gridlines = f'<line x1="0" y1="24" x2="{width}" y2="24" class="vr-gridline"/><line x1="0" y1="48" x2="{width}" y2="48" class="vr-gridline"/>'
-    if not metrics:
-        return f'<svg viewBox="0 0 {width} {height}">{gridlines}</svg>'
-
-    views = [m[value_field] for m in metrics]
-    vmin, vmax = min(views), max(views)
-    pad_top, pad_bottom, pad_x = 8, 14, 20
-    n = len(views)
-
-    def _x(i: int) -> float:
-        return pad_x + (width - 2 * pad_x) * (i / (n - 1) if n > 1 else 0.5)
-
-    def _y(v: int) -> float:
-        if vmax == vmin:
-            return height / 2
-        frac = (v - vmin) / (vmax - vmin)
-        return (height - pad_bottom) - frac * (height - pad_bottom - pad_top)
-
-    points = [(_x(i), _y(v)) for i, v in enumerate(views)]
-
-    def _dot_svg(i: int, x: float, y: float) -> str:
-        if i == n - 1:
-            return f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#b8792e" stroke="#fff" stroke-width="2.5"/>'
-        return f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="#fff" stroke="#b8792e" stroke-width="2"/>'
-
-    points_svg = "".join(
-        _hover_point_group(x, y, f"{v:,}", _dot_svg(i, x, y), width=width, height=height)
-        for i, (v, (x, y)) in enumerate(zip(views, points))
-    )
-
-    if n == 1:
-        return f'<svg viewBox="0 0 {width} {height}">{gridlines}{points_svg}</svg>'
-
-    poly = " ".join(f"{px:.1f},{py:.1f}" for px, py in points)
-    draw_len = _polyline_length(points)
-    draw_attrs = f'stroke-dasharray="{draw_len:.1f}" stroke-dashoffset="{draw_len:.1f}"'
-    return (
-        f'<svg viewBox="0 0 {width} {height}">{gridlines}'
-        f'<polyline points="{poly}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="6" '
-        f'stroke-linecap="round" stroke-linejoin="round" opacity="0.16" filter="url(#vr-glow-v2)" {draw_attrs}/>'
-        f'<polyline points="{poly}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-line-v2)" stroke-width="2.5" '
-        f'stroke-linecap="round" stroke-linejoin="round" {draw_attrs}/>{points_svg}</svg>'
-    )
-
-
-def _ring_svg(pct: int, *, size: int = 56, stroke: int = 7, color: str = "#ffd15c", track: str = "rgba(255,255,255,0.16)") -> str:
-    """작은 원형 게이지 하나 — 스탯 카드 줄의 히어로 타일 전용(2026-09-02,
-    레이아웃 리뉴얼). _render_channel_donut()의 stroke-dasharray 원리를 그대로
-    쓰되 구간을 하나만(진행분/전체) 그린다."""
-    r = (size - stroke) / 2
-    cx = cy = size / 2
-    circumference = 2 * 3.14159265 * r
-    seg = round(pct / 100 * circumference, 2)
-    return (
-        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}">'
-        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{track}" stroke-width="{stroke}"/>'
-        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" stroke-width="{stroke}" '
-        f'stroke-linecap="round" stroke-dasharray="{seg} {circumference:.1f}" '
-        f'transform="rotate(-90 {cx} {cy})"/>'
-        f"</svg>"
-    )
-
-
-def _render_stat_row(
-    tiles: list[tuple[str, str, str]], *, hero_label: str, hero_value: str | None, hero_sub: str, hero_pct: int,
-) -> None:
-    """스탯 카드 4분할 줄(2026-09-02 신규, 레이아웃 리뉴얼 — manyo.madup.app
-    레퍼런스 참고). 앞의 3개(tiles)는 평범한 흰 카드, 맨 오른쪽 1개는 어두운
-    배경 + 원형 게이지로 튀게 만드는 "히어로 타일". 탭마다(상위노출/콘텐츠
-    성과) 강조하고 싶은 지표가 달라서(2026-09-02 탭 분할로) 라벨·값을
-    호출부가 통째로 넘긴다 — 이 함수는 "3+1 레이아웃"이라는 형태만 안다.
-
-    tiles: [(라벨, 이미 포맷된 값 문자열, 단위 또는 빈 문자열), ...] 정확히 3개.
-    hero_value가 None이면(집계 대상 자체가 없음) 게이지는 0%, 값은 "—"."""
-    tiles_html = "".join(
-        f'<div class="vr-stat-tile"><span class="vr-stat-tile-label">{_esc(label)}</span>'
-        f'<b class="vr-stat-tile-value">{_esc(value)}</b>'
-        + (f'<span class="vr-stat-tile-unit">{_esc(unit)}</span>' if unit else "")
-        + "</div>"
-        for label, value, unit in tiles
-    )
-    hero_display = f'"{_esc(hero_value)}"' if hero_value else "—"
-    ring = _ring_svg(hero_pct if hero_value else 0)
-    st.markdown(
-        f'<div class="vr-stat-row">{tiles_html}'
-        f'<div class="vr-stat-tile vr-stat-tile--hero">'
-        f'<div class="vr-stat-tile-hero-text"><span class="vr-stat-tile-label">{_esc(hero_label)}</span>'
-        f'<b class="vr-stat-tile-value">{hero_display}</b>'
-        f'<span class="vr-stat-tile-hero-sub">{_esc(hero_sub)}</span></div>'
-        f'<div class="vr-stat-tile-ring">{ring}</div>'
-        f"</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-
-_DONUT_COLORS = {"blog": "#3a5ac4", "cafe": "#c9a86a", "community": "#8a6fd6", "instagram": "#d6478a", "youtube": "#e2453e"}
-
-
-def _render_channel_donut(distribution: dict) -> None:
-    total = sum(distribution.values())
-    if not total:
-        st.caption("아직 등록된 콘텐츠가 없다.")
-        return
-
-    circumference = 2 * 3.14159265 * 36
-    ordered = sorted(distribution.items(), key=lambda kv: kv[1], reverse=True)
-    cumulative_deg = -90.0
-    arcs = []
-    legend_rows = []
-    for channel, count in ordered:
-        pct_frac = count / total
-        seg_len = round(pct_frac * circumference, 2)
-        color = _DONUT_COLORS.get(channel, "#a39c8c")
-        arcs.append(
-            f'<circle cx="48" cy="48" r="36" fill="none" stroke="{color}" stroke-width="14" '
-            f'stroke-dasharray="{seg_len} {circumference:.1f}" transform="rotate({cumulative_deg:.1f} 48 48)"/>'
-        )
-        pct_display = round(pct_frac * 100)
-        legend_rows.append(
-            f'<div class="vr-donut-legend-row"><span class="vr-donut-dot" style="background:{color};"></span>'
-            f'{_esc(channel)}<span class="vr-donut-legend-num">{count}건</span>'
-            f'<span class="vr-donut-legend-pct">{pct_display}%</span></div>'
-        )
-        cumulative_deg += pct_frac * 360
-
-    st.markdown(
-        f'<div class="vr-donut-block">'
-        f'<div class="vr-donut-wrap"><svg viewBox="0 0 96 96">'
-        f'<circle cx="48" cy="48" r="36" fill="none" stroke="#f0ede8" stroke-width="14"/>'
-        f'{"".join(arcs)}</svg>'
-        f'<div class="vr-donut-center"><b>{total}</b><span>등록 콘텐츠</span></div></div>'
-        f'<div class="vr-donut-legend">{"".join(legend_rows)}</div>'
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-
-def _render_exposure_rank_list(exposure_counts: dict) -> None:
-    if not exposure_counts:
-        st.caption("아직 네이버 순위가 1페이지에 든 콘텐츠가 없다.")
-        return
-
-    total = sum(exposure_counts.values())
-    ordered = sorted(exposure_counts.items(), key=lambda kv: kv[1], reverse=True)
-    rows = []
-    for i, (channel, count) in enumerate(ordered):
-        pct = round(count / total * 100) if total else 0
-        icon = _CHANNEL_ICON.get(channel, "community")
-        top_cls = " vr-rank-item--top" if i == 0 else ""
-        rows.append(
-            f'<div class="vr-rank-item{top_cls}">'
-            f'<div class="vr-rank-ordinal">{i + 1}위</div>'
-            f'<div class="vr-rank-chan">'
-            f'<span class="vr-channel-badge"><svg><use href="#vr-logo-{icon}"/></svg></span>'
-            f'<span class="vr-rank-chan-name">{_esc(channel)}</span></div>'
-            f'<div class="vr-rank-track"><div class="vr-rank-fill" style="width:{pct}%"></div></div>'
-            f'<div class="vr-rank-figures"><span class="vr-rank-value">{count}</span>'
-            f'<span class="vr-rank-unit">건</span></div>'
-            f'<div class="vr-rank-share">전체의 {pct}%</div>'
-            f"</div>"
-        )
-    st.markdown(f'<div class="vr-rank-list">{"".join(rows)}</div>', unsafe_allow_html=True)
-
-
-_SERP_TABS = ("블로그API", "카페API")
-
-
-def _render_keyword_serp_section(
-    target_keywords: list[str], serp_rows: list[dict], ranks_for_campaign: list[dict], contents_by_id: dict,
-) -> None:
-    """추적 키워드마다 "이 키워드를 검색하면 실제로 뭐가 노출되는지"(경쟁
-    게시글 포함 상위 N건)를 순위대로 보여주고, 그중 우리 콘텐츠는 색을
-    다르게 강조한다(2026-09-02, 콘텐츠 중심 목록 → 키워드 중심 SERP로 전환 —
-    팀장님 요청: 키워드별로 검색결과를 리스트업하고 우리 콘텐츠만 강조,
-    순위는 잡히는데 리스트엔 없으면 "OOO 몇위" 텍스트로).
-
-    블로그API·카페API 두 탭만 돈다 — VIEW는 GitHub Actions IP가 네이버
-    WAF에 막혀 실서비스에서 SERP 스냅샷 자체가 안 만들어진다
-    (scripts/collect_naver_ranks.py::collect_keyword_serp 참고).
-    """
-    if not target_keywords:
-        st.caption("추적 중인 키워드가 없다.")
-        return
-
-    for keyword in target_keywords:
-        for tab in _SERP_TABS:
-            rows = latest_keyword_serp(serp_rows, keyword, tab)
-
-            if rows:
-                row_items = []
-                for row in rows:
-                    ours_cls = " vr-serp-row--ours" if row["content_id"] else ""
-                    title = _esc(row.get("title") or row["url"])
-                    row_items.append(
-                        f'<a class="vr-serp-row{ours_cls}" href="{_esc(row["url"])}" target="_blank" rel="noopener noreferrer">'
-                        f'<span class="vr-serp-rank">{row["rank"]}위</span>'
-                        f'<span class="vr-serp-title">{title}</span>'
-                        f"</a>"
-                    )
-                list_html = f'<div class="vr-serp-list">{"".join(row_items)}</div>'
-            else:
-                list_html = '<div class="vr-serp-empty">아직 수집 전이다.</div>'
-
-            # 순위는 잡혔는데(collect_campaign_ranks가 매치) 위 SERP 리스트
-            # 안에는 없는 우리 콘텐츠(예: 18위 — 상위 10건 스냅샷 밖) 전부를
-            # 텍스트 한 줄씩으로 덧붙인다. 같은 키워드·탭에 우리 콘텐츠가
-            # 여러 개 매치될 수도 있어 첫 건만 보지 않는다.
-            visible_content_ids = {row["content_id"] for row in rows if row["content_id"]}
-            our_matches = [
-                r for r in latest_matched_ranks(ranks_for_campaign, keyword, tab)
-                if r["content_id"] not in visible_content_ids
-            ]
-            note_html = "".join(
-                f'<div class="vr-serp-note">"{_esc((contents_by_id.get(r["content_id"]) or {}).get("title") or r["content_id"])}" {r["rank"]}위</div>'
-                for r in our_matches
-            )
-
-            st.markdown(
-                f'<div class="vr-serp-panel"><div class="vr-serp-head">'
-                f'<span class="vr-serp-keyword">"{_esc(keyword)}"</span>'
-                f'<span class="vr-serp-tab">{_esc(tab)}</span></div>'
-                f"{list_html}{note_html}</div>",
-                unsafe_allow_html=True,
-            )
-
-
-def _render_card_header(content: dict, *, is_empty: bool = False) -> None:
-    """카드 전체를 그 콘텐츠 원문 URL로 가는 링크로 만든다.
-
-    카드 안에는 버튼·입력창 같은 실제 Streamlit 위젯이 없다(전부 st.markdown/
-    st.caption) — 그래서 카드 전체를 덮는 투명 <a> 오버레이(.vr-card-link,
-    absolute+inset:0)를 하나 깔아도 클릭을 가로챌 다른 위젯이 없다. 위치 기준은
-    위 .vr-card-marker :has() 규칙에서 카드 컨테이너 자체에 준 position:relative.
-
-    is_empty(조회수 0 = 아직 수집 전)면 마커에 --empty 클래스를 추가로 얹어
-    카드 전체를 옅게(투명도) 처리한다 — 목록 맨 아래로 정렬된 것과 짝을 맞춰
-    "아직 데이터 없음"을 시각적으로도 구분한다.
-    """
-    channel = content["channel"]
-    icon = _CHANNEL_ICON.get(channel, "community")
-    title = _esc(content.get("title") or content["url"])
-    release = _esc(content.get("release_at") or "미정")
-    url = _esc(content["url"])
-    empty_class = " vr-card-marker--empty" if is_empty else ""
-    st.markdown(
-        f'<span class="vr-card-marker vr-card-marker--{channel}{empty_class}"></span>'
-        f'<a class="vr-card-link" href="{url}" target="_blank" rel="noopener noreferrer" '
-        f'aria-label="{title} 원문 열기"></a>'
-        f'<div class="vr-card-head">'
-        f'<div class="vr-card-title">{title}</div>'
-        f'<span class="vr-card-logo"><svg><use href="#vr-logo-{icon}"/></svg></span>'
-        f"</div>"
-        f'<div class="vr-card-meta">{_esc(channel)} · 릴리즈 {release}</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def _rank_trend_svg(history: list[tuple[str, int]], width: int = 640, height: int = 72) -> str:
-    """실측 순위 이력만 그린다 — _sparkline_svg와 같은 원칙(없는 값을 추세로
-    지어내지 않는다), y축만 반대다: 1위가 위, 숫자가 클수록 아래로 내려간다.
-    축 기준선 텍스트 대신 각 점 위(또는 위 여백이 없으면 아래)에 실제 순위
-    값을 직접 라벨로 붙인다.
-
-    상위노출이 안 잡힌 날(rank=0)은 차트 맨 아래 "미노출" 줄에 점만 찍고
-    실측 순위와 선으로 잇지 않는다 — "0위"가 1위보다 좋다는 착시를 막기 위해서.
-    """
-    pad_top, pad_bottom, pad_x = 16, 20, 20
-    miss_y = height - 6
-    n = len(history)
-
-    def _x(i: int) -> float:
-        return pad_x + (width - 2 * pad_x) * (i / (n - 1) if n > 1 else 0.5)
-
-    ranked_only = [r for _, r in history if r > 0]
-    rmin = min(ranked_only) if ranked_only else 1
-    rmax = max(ranked_only) if ranked_only else 1
-
-    def _y(rank: int) -> float:
-        if rank == 0:
-            return miss_y
-        if rmax == rmin:
-            return pad_top + (height - pad_bottom - pad_top) / 2
-        frac = (rank - rmin) / (rmax - rmin)  # 0 = 1위 방향(최고), 1 = 최악
-        return pad_top + frac * (height - pad_bottom - pad_top)
-
-    points = [(_x(i), _y(rank)) for i, (_, rank) in enumerate(history)]
-    has_miss = any(rank == 0 for _, rank in history)
-
-    gridlines = f'<line x1="0" y1="{pad_top - 2:.1f}" x2="{width}" y2="{pad_top - 2:.1f}" class="vr-gridline"/>'
-    if has_miss:
-        gridlines += (
-            f'<line x1="{pad_x}" y1="{miss_y - 10:.1f}" x2="{width - pad_x}" y2="{miss_y - 10:.1f}" '
-            f'class="vr-rank-trend-sep"/>'
-        )
-
-    # 실측 구간끼리만 잇는다 — 미노출(rank 0)이 낀 자리는 선을 끊는다.
-    segments: list[list[tuple[float, float]]] = [[]]
-    for (_, rank), point in zip(history, points):
-        if rank == 0:
-            segments.append([])
-            continue
-        segments[-1].append(point)
-    def _polyline(seg: list[tuple[float, float]]) -> str:
-        pts = " ".join(f"{px:.1f},{py:.1f}" for px, py in seg)
-        draw_len = _polyline_length(seg)
-        draw_attrs = f'stroke-dasharray="{draw_len:.1f}" stroke-dashoffset="{draw_len:.1f}"'
-        glow = (
-            f'<polyline points="{pts}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-rank)" stroke-width="6" '
-            f'stroke-linecap="round" stroke-linejoin="round" opacity="0.16" filter="url(#vr-glow-v2)" {draw_attrs}/>'
-        )
-        line = (
-            f'<polyline points="{pts}" class="vr-line-draw" fill="none" stroke="url(#vr-grad-rank)" stroke-width="2.5" '
-            f'stroke-linecap="round" stroke-linejoin="round" {draw_attrs}/>'
-        )
-        return glow + line
-
-    lines_svg = "".join(_polyline(seg) for seg in segments if len(seg) >= 2)
-    # 값은 항상 켜진 라벨 대신 호버로만 보여준다(조회수/좋아요 그래프와 통일,
-    # 팀장님 요청 2026-09-02) — 마커(dot)는 그대로 항상 보이고, 그 위에 커서를
-    # 올리면 그날 순위(또는 "미노출")가 뜬다.
-    points_svg = "".join(
-        _hover_point_group(
-            px, py, "미노출" if rank == 0 else f"{rank}위",
-            (
-                f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" class="vr-rank-trend-miss"/>'
-                if rank == 0
-                else f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="#6da7ec" stroke="#fff" stroke-width="2"/>'
-            ),
-            width=width, height=height,
-        )
-        for (_, rank), (px, py) in zip(history, points)
-    )
-    return f'<svg viewBox="0 0 {width} {height}">{gridlines}{lines_svg}{points_svg}</svg>'
-
-
-def _render_metrics_panel(
-    metrics: list[dict], latest_rank: dict | None, rank_hist: list[tuple[str, int]], channel: str,
-) -> None:
-    """조회수(또는 인스타면 좋아요) 스파크라인 + 순위 추이 그래프(왼쪽, 세로로
-    쌓임)와 통계 패널(오른쪽)을 한 flex row로 묶는다. 하나의 st.markdown
-    호출이라야 flex의 align-items:stretch로 스탯 카드 높이가 왼쪽 콘텐츠
-    (그래프 2개) 전체 높이에 자동으로 맞는다.
-
-    channel="instagram"이면 조회수 자동수집이 불가능하므로(스펙 §1) 주
-    그래프·주 통계를 좋아요로 바꾸고, 사람이 입력해둔 조회수는 두 번째
-    통계 슬롯에 참고용 숫자로만 보여준다(그래프 아님) — 다른 채널은 이
-    분기를 안 타서 기존 동작 그대로다.
-
-    현재 순위는 "상위노출 추이" 타이틀 줄에 이어 붙인다 — 정확도 배지는
-    빼고 순위·키워드만 보여준다."""
-    if channel == "instagram":
-        likes_series = likes_history(metrics)
-        manual_metrics = sorted(
-            (m for m in metrics if m.get("source") != "auto_instagram"), key=lambda m: m["captured_at"],
-        )
-        latest_manual = manual_metrics[-1] if manual_metrics else None
-
-        if likes_series:
-            latest_likes = likes_series[-1][1]
-            num_html = f'<div class="vr-stat-num"><b>{latest_likes:,}</b><span>좋아요</span></div>'
-            chart_svg = _sparkline_svg(
-                [{"likes_count": v} for _, v in likes_series], value_field="likes_count",
-            )
-        else:
-            num_html = '<div class="vr-stat-num empty"><b>—</b><span>좋아요</span></div>'
-            chart_svg = _sparkline_svg([])
-
-        if latest_manual:
-            rate_html = (
-                f'<div class="vr-stat-secondary"><b>{latest_manual["views"]:,}</b><span>조회수(참고)</span></div>'
-            )
-        else:
-            rate_html = '<div class="vr-stat-secondary"><b class="empty">—</b><span>조회수(참고)</span></div>'
-
-        chart_title = "좋아요 추이"
-    else:
-        if metrics:
-            latest_metric = metrics[-1]
-            views = latest_metric["views"]
-            num_html = f'<div class="vr-stat-num"><b>{views:,}</b><span>조회수</span></div>'
-            rate = participation_rate(views, latest_metric.get("comments_count"))
-            rate_html = (
-                f'<div class="vr-stat-secondary"><b>{rate:.1f}%</b><span>참여율</span></div>'
-                if rate is not None
-                else '<div class="vr-stat-secondary"><b class="empty">—</b><span>참여율</span></div>'
-            )
-        else:
-            num_html = '<div class="vr-stat-num empty"><b>—</b><span>조회수</span></div>'
-            rate_html = '<div class="vr-stat-secondary"><b class="empty">—</b><span>참여율</span></div>'
-        chart_svg = _sparkline_svg(metrics)
-        chart_title = "조회수 추이"
-
-    # 카드마다 순위 데이터 유무가 달라 카드 높이가 들쭉날쭉해지지 않도록,
-    # 순위 정보는 없어도 항상 같은 자리(타이틀 줄)에 자리표시 텍스트로 남긴다.
-    if latest_rank:
-        rank_meta_html = (
-            f'<span class="vr-rank-badge">{latest_rank["rank"]}위</span>'
-            f'네이버 "{_esc(latest_rank["keyword"])}" · {_esc(latest_rank["search_tab"])}'
-        )
-    else:
-        rank_meta_html = '<span class="vr-rank-badge">—</span>아직 측정된 순위 없음'
-
-    left_blocks = [
-        '<div class="vr-chart-box">'
-        f'<div class="vr-chart-title">{chart_title}</div>'
-        f'<div class="vr-sparkline">{chart_svg}</div>'
-        "</div>",
-        '<div class="vr-chart-box">'
-        '<div class="vr-chart-title-row"><span class="vr-chart-title">상위노출 추이</span>'
-        f'<span class="vr-chart-title-meta">{rank_meta_html}</span></div>'
-        # 빈 이력에도 _rank_trend_svg가 그리드라인만 있는 빈 그래프를 안전하게 그린다.
-        f'<div class="vr-rank-trend">{_rank_trend_svg(rank_hist)}</div>'
-        "</div>",
-    ]
-
-    st.markdown(
-        f'<div class="vr-metrics-panel">'
-        f'<div class="vr-metrics-charts">{"".join(left_blocks)}</div>'
-        f'<div class="vr-card-stats">{num_html}{rate_html}</div>'
-        f"</div>"
-        f'<hr class="vr-metrics-divider">',
-        unsafe_allow_html=True,
-    )
-    if channel == "instagram":
-        if likes_series:
-            latest_likes_at = likes_series[-1][0]
-            latest_likes_metric = next(
-                (m for m in metrics if m["captured_at"] == latest_likes_at and m.get("source") == "auto_instagram"),
-                None,
-            )
-            accuracy = latest_likes_metric["accuracy"] if latest_likes_metric else "실측"
-            st.caption(f"정확도: {accuracy} · 최근 수집: {latest_likes_at}")
-        else:
-            st.caption("아직 수집된 좋아요가 없다.")
-    elif metrics:
-        latest_metric = metrics[-1]
-        st.caption(f"정확도: {latest_metric['accuracy']} · 최근 수집: {latest_metric['captured_at']}")
-    else:
-        st.caption("아직 수집된 조회수가 없다.")
-
-
-def _render_comments(content_comments: list[dict]) -> None:
-    if not content_comments:
-        return
-    st.caption(f"댓글 {len(content_comments)}건")
-    lines = []
-    for comment in content_comments[:5]:
-        nickname = comment.get("author_nickname") or "익명"
-        lines.append(
-            f'<div class="vr-comment-line">"{_esc(comment["text"])}" '
-            f'<span class="vr-nick">— {_esc(nickname)}</span></div>'
-        )
-    st.markdown(f'<div class="vr-comments">{"".join(lines)}</div>', unsafe_allow_html=True)
-
-
-@st.dialog("콘텐츠 상세", width="large")
-def _open_content_dialog(
-    content: dict, is_empty: bool, metrics: list[dict], latest_rank: dict | None,
-    rank_hist: list[tuple[str, int]], comments: list[dict],
-) -> None:
-    """요약 카드 클릭 시 뜨는 팝업(2026-09-02, 카드형 요약+팝업 전환).
-
-    이전까지 인라인으로 펼쳐 그리던 헤더+지표+댓글 렌더 함수를 그대로
-    순서대로 호출한다 — 내용 자체는 바뀌지 않았고 담는 그릇만 바뀌었다.
-    """
-    _render_card_header(content, is_empty=is_empty)
-    _render_metrics_panel(metrics, latest_rank, rank_hist, content["channel"])
-    _render_comments(comments)
-
-
-def _render_content_summary_card(
-    content: dict, *, primary_value: int, is_empty: bool,
-    metrics: list[dict], latest_rank: dict | None,
-    rank_hist: list[tuple[str, int]], comments: list[dict],
-) -> None:
-    """콘텐츠 성과 그리드 한 칸. 클릭(카드 전체를 덮는 투명 st.button —
-    위 CSS의 .vr-card-marker 오버레이 규칙 참고)하면 _open_content_dialog가
-    그 콘텐츠의 전체 상세를 팝업으로 띄운다.
-
-    다이얼로그가 필요로 하는 데이터(metrics/latest_rank/rank_hist/comments)를
-    호출부(2_콘텐츠성과.py)가 콘텐츠별로 이미 필터링해둔 걸 그대로 받아서
-    버튼 클릭 시 바로 넘긴다 — 클릭 시점에 다시 조회하지 않는다.
-    """
-    channel = content["channel"]
-    icon = _CHANNEL_ICON.get(channel, "community")
-    title = _esc(content.get("title") or content["url"])
-    release = _esc(content.get("release_at") or "미정")
-    empty_class = " vr-card-marker--empty" if is_empty else ""
-
-    metric_unit = "좋아요" if channel == "instagram" else "조회수"
-    metric_html = (
-        f'<b>{primary_value:,}</b><span>{metric_unit}</span>'
-        if primary_value > 0
-        else f'<b class="empty">—</b><span>{metric_unit}</span>'
-    )
-    chart_svg = (
-        _sparkline_svg([{"likes_count": v} for _, v in likes_history(metrics)], value_field="likes_count")
-        if channel == "instagram"
-        else _sparkline_svg(metrics)
-    )
-    rank_html = (
-        f'<span class="vr-rank-badge">{latest_rank["rank"]}위</span>' if latest_rank
-        else '<span class="vr-rank-badge">—</span>'
-    )
-    comment_html = f'<span class="vr-perfmini-comments">댓글 {len(comments)}</span>' if comments else ""
-
-    st.markdown(
-        f'<span class="vr-card-marker vr-card-marker--{channel}{empty_class}"></span>'
-        f'<div class="vr-card-head">'
-        f'<div class="vr-card-title">{title}</div>'
-        f'<span class="vr-card-logo"><svg><use href="#vr-logo-{icon}"/></svg></span>'
-        f"</div>"
-        f'<div class="vr-card-meta">{_esc(channel)} · 릴리즈 {release}</div>'
-        f'<div class="vr-perfmini-row">'
-        f'<div class="vr-perfmini-metric">{metric_html}</div>'
-        f'<div class="vr-perfmini-spark">{chart_svg}</div>'
-        f"</div>"
-        f'<div class="vr-perfmini-foot">{rank_html}{comment_html}</div>',
-        unsafe_allow_html=True,
-    )
-    if st.button(
-        f"{content.get('title') or content['url']} 상세보기",
-        key=f"perfcard_open_{content['content_id']}",
-    ):
-        _open_content_dialog(content, is_empty, metrics, latest_rank, rank_hist, comments)
-
-
-def _render_keyword_impact_leaderboard(week: str | None, rows: list[dict], score_unit: str) -> None:
-    """캠페인 키워드끼리 서로 비교한, 가장 최근 주 파급력 랭킹(2026-09-02 신규).
-
-    "채널별 상위노출" 막대 리스트(_render_exposure_rank_list)와 같은 시각
-    언어(순위·막대·수치)를 쓰되, 지난주 대비 순위 변동(▲▼) 배지를 더한다 —
-    이 섹션의 핵심 질문이 "이 키워드가 지난주보다 잘 되고 있나"라서.
-    """
-    if week is None:
-        st.caption("아직 주간 집계를 낼 만큼 키워드 순위 데이터가 쌓이지 않았다.")
-        return
-    if not rows:
-        st.caption(f"{week_label(week)} 주 — 파급력이 잡힌 키워드가 아직 없다.")
-        return
-
-    total = sum(row["score"] for row in rows) or 1
-    items = []
-    for row in rows:
-        pct = round(row["score"] / total * 100)
-        delta = row["delta"]
-        if delta is None:
-            delta_html = '<span class="vr-kwimpact-delta vr-kwimpact-delta--new">NEW</span>'
-        elif delta > 0:
-            delta_html = f'<span class="vr-kwimpact-delta vr-kwimpact-delta--up">▲{delta}</span>'
-        elif delta < 0:
-            delta_html = f'<span class="vr-kwimpact-delta vr-kwimpact-delta--down">▼{abs(delta)}</span>'
-        else:
-            delta_html = '<span class="vr-kwimpact-delta vr-kwimpact-delta--flat">—</span>'
-        top_cls = " vr-kwimpact-item--top" if row["rank"] == 1 else ""
-        items.append(
-            f'<div class="vr-kwimpact-item{top_cls}">'
-            f'<div class="vr-kwimpact-top">'
-            f'<span class="vr-kwimpact-ordinal">{row["rank"]}위</span>'
-            f'<span class="vr-kwimpact-keyword">"{_esc(row["keyword"])}"</span>'
-            f"{delta_html}"
-            f'<span class="vr-kwimpact-score">{row["score"]:,}{score_unit}</span>'
-            f"</div>"
-            f'<div class="vr-kwimpact-track"><div class="vr-kwimpact-fill" style="width:{pct}%"></div></div>'
-            f"</div>"
-        )
-    st.caption(f"{week_label(week)} 주 기준 · 지난주 대비 변동")
-    st.markdown(f'<div class="vr-kwimpact-list">{"".join(items)}</div>', unsafe_allow_html=True)
-
-
-def _render_keyword_watchlist(summary: dict, contents_by_id: dict) -> None:
-    if not summary:
-        st.caption("등록된 추적 키워드가 없다.")
-        return
-    # 키워드마다 st.markdown()을 따로 호출하면 Streamlit이 각 호출을 독립된
-    # 블록으로 렌더해서 카드 사이 여백이 통제 안 된다. 모든 키워드 카드를
-    # 하나의 st.markdown 호출로 묶어 .vr-kw-grid 래퍼(세로 스택, 좁은 우측
-    # 레일 전용 — 위 CSS 주석 참고) 안에 넣는다.
-    cards_html = []
-    for keyword, by_tab in summary.items():
-        rows_html = [f'<div class="vr-kw-name">"{_esc(keyword)}"</div>']
-        # VIEW는 GitHub Actions IP가 네이버 WAF에 막혀 항상 미취득이라 화면에서 제외한다.
-        for tab in ("블로그API", "카페API"):
-            if tab not in by_tab:
-                continue
-            tab_rows = by_tab[tab]
-            rows_html.append(f'<div class="vr-kw-tab-group"><div class="vr-kw-tab-head">{_esc(tab)}')
-            matched_rows = [r for r in tab_rows if r["rank"] is not None]
-            if matched_rows:
-                rows_html.append(f'<span class="vr-kw-tab-count"> · 상위노출 {len(matched_rows)}건</span></div>')
-                for row in matched_rows:
-                    matched = contents_by_id.get(row["content_id"])
-                    matched_label = _esc(matched.get("title") or matched["url"]) if matched else "(콘텐츠 정보 없음)"
-                    rows_html.append(
-                        f'<div class="vr-kw-content-row">'
-                        f'<div class="vr-kw-content-row-top"><span class="vr-rank-badge">{row["rank"]}위</span>'
-                        f'<span class="vr-kw-content-title">{matched_label}</span></div>'
-                        f'<span class="vr-kw-content-date">{_esc(row["captured_at"])} 수집</span></div>'
-                    )
-            else:
-                rows_html.append('</div><div class="vr-kw-tab-empty">아직 잡히는 콘텐츠 없음</div>')
-            rows_html.append("</div>")
-        if len(rows_html) == 1:
-            rows_html.append('<div class="vr-kw-tab-empty">아직 수집된 적 없음.</div>')
-        cards_html.append(f'<div class="vr-kw-card">{"".join(rows_html)}</div>')
-    st.markdown(f'<div class="vr-kw-grid">{"".join(cards_html)}</div>', unsafe_allow_html=True)
-
-
+SERP_TABS = ("블로그API", "카페API")  # 상위노출 v3 페이지(1_상위노출.py)가 쓰는 SERP 탭 목록.
+_SHARE_COLORS = ["var(--accent)", "var(--ch-blog)", "var(--ch-community)", "var(--s3)"]
 
 
 def _primary_metric_value(content: dict, view_metrics: list[dict], all_metrics: list[dict]) -> int:
@@ -1132,89 +58,356 @@ def _primary_metric_value(content: dict, view_metrics: list[dict], all_metrics: 
     return latest_views(view_metrics, content["content_id"])
 
 
-def render_campaign_header(email: str) -> None:
-    """히어로 배너 + 설명 캡션. 상위노출·콘텐츠 성과 두 페이지가 똑같이
-    그린다(2026-09-02, 메뉴 분리) — 각자 별도 사이드바 페이지가 됐으니
-    각 페이지가 자기 스크립트 안에서 직접 호출해야 한다."""
-    _inject_design_system()
-    st.markdown(
-        f'<div class="vr-amb"><div class="vr-amb-top">'
-        f'<div class="vr-amb-brand">바이럴 <span>리포팅</span></div>'
-        f'<div class="vr-amb-user">{_esc(email)}</div>'
-        f'</div><div class="vr-amb-title">REPORT DASHBOARD</div></div>',
-        unsafe_allow_html=True,
-    )
-    st.caption("채널별 성과·키워드 순위·콘텐츠 상세를 한 화면에서 확인한다.")
+def render_export_button(campaign: dict, ctx: dict, *, share_summary: dict | None = None, container=None) -> None:
+    """내보내기 다운로드 버튼 — 세 페이지(0_요약/1_상위노출/
+    2_콘텐츠성과)가 각자 복붙해 쓰던 `st.columns([5, 1])` + `st.download_button`
+    블록을 여기 하나로 모았다(Task 11에서 미룬 DRY, Task 12에서 처리).
+
+    라벨은 "리포트 내보내기"에서 "내보내기"로 줄였다(Task 13 fix round 4) —
+    좁은 컨트롤 칸(export_col/export_slot)에서 긴 라벨이 두 줄로 줄바꿈되던
+    실측 문제. 목업 원래 라벨도 "내보내기"였다.
+
+    share_summary는 상위노출 페이지만 넘긴다(share.total_share 결과) — 나머지
+    두 페이지는 점유율 요약이 없어 기본값 None 그대로 build_export_markdown에 전달된다.
+
+    container는 Task 13에서 추가 — 각 페이지가 제목 블록 아래 컨트롤 행에
+    쓰는 슬롯(`st.columns(...)`의 한 칸 또는 `st.empty()`)을 넘기면 그 안에
+    바로 그린다(중첩 `st.columns` 없이). 안 넘기면(container=None) 예전처럼
+    이 함수가 직접 `st.columns([5, 1])`로 우측 칸을 만들어 쓴다 — 하위 호환.
+    """
+    def _button() -> None:
+        st.download_button(
+            "내보내기",
+            data=build_export_markdown(
+                f"{campaign['brand']} · {campaign['name']}", ctx["contents"], ctx["view_metrics"],
+                ctx["all_ranks"], ctx["all_comments"], share_summary=share_summary,
+            ),
+            file_name=f"{campaign['name']}_리포트.md", mime="text/markdown", key="export_button",
+        )
+
+    if container is not None:
+        with container:
+            _button()
+    else:
+        _, export_col = st.columns([5, 1])
+        with export_col:
+            _button()
 
 
-def load_campaign_context(repo) -> dict:
-    """캠페인 선택+채널 필터+데이터 로딩+내보내기 버튼 — 상위노출·콘텐츠
-    성과 두 페이지가 똑같이 쓰는 헤더 블록(2026-09-02, 메뉴 분리 전에는
-    한 페이지 안에서 탭 두 개가 나눠 쓰던 걸 그대로 옮김). 등록된 캠페인이
-    없거나 이 캠페인에 콘텐츠가 없으면 st.info + st.stop()으로 여기서
-    끝낸다 — 호출부(각 페이지)는 그 경우를 또 처리할 필요 없다.
-
-    반환: campaign_label/campaign_id/contents/content_ids/all_metrics/
-    view_metrics/all_ranks/all_comments/target_keywords/
-    keyword_ranks_for_campaign/keyword_serp_for_campaign/contents_by_id
-    키를 가진 dict."""
-    campaigns = repo.campaigns()
-    campaign_labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
-
-    if not campaign_labels:
-        st.info("아직 등록된 캠페인이 없다. '등록·관리자' 페이지에서 먼저 등록해야 한다.")
-        st.stop()
-
-    picker_col, export_col = st.columns([3, 1])
-    with picker_col:
-        campaign_label = st.selectbox("캠페인", options=list(campaign_labels.keys()), key="report_campaign_picker")
-    campaign_id = campaign_labels[campaign_label]
-
-    channel_filter = st.multiselect("채널 필터", options=CHANNELS, default=CHANNELS, key="report_channel_filter")
-
-    contents = [c for c in repo.contents(campaign_id=campaign_id) if c["channel"] in channel_filter]
+def load_campaign_context(repo, campaign_id: str, channel_filter: list[str]) -> dict | None:
+    """캠페인 데이터 로딩만 한다(위젯 없음 — 캠페인 선택은 header.py, 채널 필터는 각 페이지 컨트롤).
+    콘텐츠가 없으면 None. 반환 키: contents/content_ids/all_metrics/view_metrics/all_ranks/all_comments/
+    target_keywords/keyword_ranks_for_campaign/keyword_serp_for_campaign/contents_by_id/all_contents"""
+    all_contents = repo.contents(campaign_id=campaign_id)
+    contents = [c for c in all_contents if c["channel"] in channel_filter]
+    if not contents:
+        return None
     content_ids = {c["content_id"] for c in contents}
-
     all_metrics = [m for m in repo.content_metrics() if m["content_id"] in content_ids]
-    # auto_instagram 행은 views=0 관례 sentinel이라(실제 조회수 아님, 스펙 §4.2),
-    # 조회수 참고 숫자를 계산하는 모든 자리에서 반드시 제외해야 한다 — 안 그러면
-    # 매일 쌓이는 이 행이 사람이 입력한 진짜 조회수를 조용히 덮어써 버린다.
     view_metrics = [m for m in all_metrics if m.get("source") != "auto_instagram"]
     all_ranks = [r for r in repo.keyword_ranks() if r["content_id"] in content_ids]
     all_comments = [c for c in repo.comments() if c["content_id"] in content_ids]
-
-    # 내보내기 버튼을 페이지 맨 아래 대신 필터 바로 옆(우측 상단)에 둔다
-    # (2026-09-02, 레이아웃 리뉴얼 — manyo.madup.app 레퍼런스처럼 헤더 영역에
-    # 주요 액션을 둔다).
-    with export_col:
-        st.write("")  # 셀렉트박스 라벨 높이만큼 내려서 버튼 세로 위치를 맞춘다.
-        export_markdown = build_export_markdown(campaign_label, contents, view_metrics, all_ranks, all_comments)
-        st.download_button(
-            "리포트 내보내기", data=export_markdown, file_name=f"{campaign_label}_리포트.md",
-            mime="text/markdown", key="export_button", use_container_width=True,
-        )
-
-    if not contents:
-        st.info("이 캠페인에는 등록된 콘텐츠가 없다.")
-        st.stop()
-
-    # keyword_ranks()는 캠페인으로 필터링하지 않는다(스키마에 campaign_id가 없다) —
-    # 이 캠페인에 등록된 키워드 문자열로만 걸러낸다. 알려진 한계: 다른 캠페인이
-    # 우연히 똑같은 키워드 문자열을 쓰면 그 결과도 섞여 보인다(design.md §3.2 참고,
-    # 스키마 변경 없이 가기로 한 결정).
     target_keywords = list(dict.fromkeys(k["keyword"] for k in repo.target_keywords(campaign_id=campaign_id)))
     keyword_ranks_for_campaign = [r for r in repo.keyword_ranks() if r["keyword"] in target_keywords]
-    # 같은 이유(스키마에 campaign_id 없음)로 SERP 스냅샷도 키워드 문자열로만 거른다.
     keyword_serp_for_campaign = [r for r in repo.keyword_serp() if r["keyword"] in target_keywords]
-    contents_by_id = {c["content_id"]: c for c in repo.contents(campaign_id=campaign_id)}
-
     return {
-        "campaign_label": campaign_label, "campaign_id": campaign_id,
-        "contents": contents, "content_ids": content_ids,
-        "all_metrics": all_metrics, "view_metrics": view_metrics,
-        "all_ranks": all_ranks, "all_comments": all_comments,
-        "target_keywords": target_keywords,
-        "keyword_ranks_for_campaign": keyword_ranks_for_campaign,
-        "keyword_serp_for_campaign": keyword_serp_for_campaign,
-        "contents_by_id": contents_by_id,
+        "campaign_id": campaign_id, "contents": contents, "all_contents": all_contents, "content_ids": content_ids,
+        "all_metrics": all_metrics, "view_metrics": view_metrics, "all_ranks": all_ranks, "all_comments": all_comments,
+        "target_keywords": target_keywords, "keyword_ranks_for_campaign": keyword_ranks_for_campaign,
+        "keyword_serp_for_campaign": keyword_serp_for_campaign, "contents_by_id": {c["content_id"]: c for c in all_contents},
     }
+
+
+def _content_rows(ctx):
+    """[(content, primary_value, spark_svg, comments_n, latest_rank)] 정렬: 값 내림차순, 0은 맨 아래."""
+    out = []
+    for c in ctx["contents"]:
+        cid = c["content_id"]
+        metrics = sorted((m for m in ctx["all_metrics"] if m["content_id"] == cid), key=lambda m: m["captured_at"])
+        pv = _primary_metric_value(c, ctx["view_metrics"], ctx["all_metrics"])
+        series = [v for _, v in likes_history(metrics)] if c["channel"] == "instagram" else [m["views"] for m in metrics if m.get("source") != "auto_instagram"]
+        spark = charts.sparkline_svg(series, width=84, height=22) if len(series) >= 2 else ""
+        n_comments = sum(1 for k in ctx["all_comments"] if k["content_id"] == cid)
+        rank = latest_rank_row(ctx["all_ranks"], cid)
+        out.append((c, pv, spark, n_comments, rank))
+    return sorted(out, key=lambda t: (t[1] == 0, -t[1]))
+
+
+def _row_participation_rate(ctx, content: dict, primary_value: int) -> float | None:
+    """행 정렬용 참여율. 인스타는 조회수를 구조적으로 못 모으므로(§1) 항상
+    None — nonzero 그룹 안에서도 맨 뒤로 보낸다(R16). 나머지 채널은 콘텐츠의
+    최신 non-auto_instagram 지표 행(댓글수)을 pv(=최신 조회수)와 나눈다."""
+    if content["channel"] == "instagram":
+        return None
+    cid = content["content_id"]
+    vm_c = sorted(
+        (m for m in ctx["all_metrics"] if m["content_id"] == cid and m.get("source") != "auto_instagram"),
+        key=lambda m: m["captured_at"],
+    )
+    if not vm_c:
+        return None
+    return participation_rate(primary_value, vm_c[-1].get("comments_count"))
+
+
+def _sorted_rows(ctx, sort_key: str = "value", *, hide_empty: bool = False) -> list:
+    """행 리스트 표시 순서의 단일 정본 — 페이지(기본 선택)와
+    render_content_rows(실제 렌더)가 항상 같은 함수를 써야 "초기 선택 =
+    정렬 1위"가 어떤 정렬·필터 조합에서도 어긋나지 않는다(R15).
+
+    모든 정렬에서 값(pv)이 0인 행은 맨 아래로 고정한다 — 안정 정렬을
+    두 번(부차 키 → 주 키) 적용해서 각 정렬의 내부 순서를 보존한다.
+    """
+    rows = _content_rows(ctx)
+    if hide_empty:
+        rows = [r for r in rows if r[1] != 0]
+    if sort_key == "comments":
+        rows.sort(key=lambda t: -t[3])
+        rows.sort(key=lambda t: t[1] == 0)
+    elif sort_key == "recent":
+        rows.sort(key=lambda t: (t[0].get("release_at") or ""), reverse=True)
+        rows.sort(key=lambda t: t[1] == 0)
+    elif sort_key == "rate":
+        def _rate_key(t):
+            rate = _row_participation_rate(ctx, t[0], t[1])
+            return (rate is None, -(rate or 0))
+
+        rows.sort(key=_rate_key)
+        rows.sort(key=lambda t: t[1] == 0)
+    # sort_key == "value"(기본): _content_rows가 이미 (값 0 여부, -값)으로 정렬해서 돌려준다.
+    return rows
+
+
+def render_content_rows(ctx, selected_id: str | None, *, sort_key: str = "value", hide_empty: bool = False) -> str | None:
+    """행 리스트(마스터). 행 클릭 시 선택된 content_id를 돌려준다(없으면 None).
+
+    sort_key: value|comments|rate|recent. hide_empty=True면 미수집(pv==0) 행을 아예 뺀다.
+    """
+    rows = _sorted_rows(ctx, sort_key, hide_empty=hide_empty)
+    vmax = max((r[1] for r in rows), default=0) or 1
+    clicked = None
+    st.markdown('<div class="lrow-head lrow"><span class="label">콘텐츠</span><span></span><span class="label">추이</span><span class="label r">조회 · 좋아요</span><span class="label r">댓글</span><span class="label r">순위</span><span></span></div>', unsafe_allow_html=True)
+    for c, pv, spark, n_comments, rank in rows:
+        cid = c["content_id"]
+        unit = "좋아요" if c["channel"] == "instagram" else "조회"
+        sel = " is-sel" if cid == selected_id else ""
+        rank_html = ui.rank_badge(rank["rank"] if rank else None, "—") if c["channel"] != "instagram" else '<span class="label">—</span>'
+        with st.container():
+            st.markdown(
+                f'<span class="lrow-marker{sel}"></span>'
+                f'<div class="lrow{" is-empty" if pv == 0 else ""}">'
+                f'<div class="t"><span class="who">{_esc(c.get("title") or c["url"])}</span><small>{ui.CHANNEL_LABEL.get(c["channel"], c["channel"])} · {_esc((c.get("release_at") or "")[:10])}</small></div>'
+                f'<span>{ui.channel_icon(c["channel"], 15)}</span>'
+                f'<div class="spark chart">{spark}</div>'
+                f'<span class="r">{ui.inline_bar(pv / vmax * 100, width=64)}<span class="mono">{pv:,}</span> <span class="label">{unit}</span></span>'
+                f'<span class="r mono">{n_comments or "—"}</span><span class="r">{rank_html}</span><span class="chev">›</span></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button(f"{c.get('title') or c['url']} 상세", key=f"lrow_{cid}"):
+                clicked = cid
+    return clicked
+
+
+def render_content_detail(ctx, content_id: str) -> None:
+    c = ctx["contents_by_id"][content_id]
+    metrics = sorted((m for m in ctx["all_metrics"] if m["content_id"] == content_id), key=lambda m: m["captured_at"])
+    comments = [k for k in ctx["all_comments"] if k["content_id"] == content_id]
+    is_ig = c["channel"] == "instagram"
+    if is_ig:
+        hist = likes_history(metrics)
+        series, dates = [v for _, v in hist], [d[:10] for d, _ in hist]
+        primary, primary_label = (series[-1] if series else None), "좋아요"
+        manual = [m for m in metrics if m.get("source") != "auto_instagram"]
+        third = (f"{manual[-1]['views']:,}", "조회수(참고)", "수동 입력") if manual else ("—", "조회수(참고)", "수동 입력 없음")
+        # KPI 캡션(정확도·시각)은 primary 숫자를 만든 것과 같은 행에서 뽑는다(§8) —
+        # likes_history가 실제로 본 auto_instagram 행 중 가장 최근 것.
+        auto_rows = [m for m in metrics if m.get("source") == "auto_instagram" and m.get("likes_count") is not None]
+        source_row = auto_rows[-1] if auto_rows else None
+    else:
+        vm = [m for m in metrics if m.get("source") != "auto_instagram"]
+        series, dates = [m["views"] for m in vm], [m["captured_at"][:10] for m in vm]
+        primary, primary_label = (series[-1] if series else None), "조회수"
+        rate = participation_rate(primary, vm[-1].get("comments_count")) if vm else None
+        third = (f"{rate:.1f}%" if rate is not None else "—", "참여율", "댓글 ÷ 조회수")
+        source_row = vm[-1] if vm else None
+    latest_at = (source_row["captured_at"][:16].replace("T", " ") if source_row else "—")
+    kpis = (
+        f'<div class="kpi"><span class="label">{primary_label}</span><div class="figure num">{f"{primary:,}" if primary is not None else "—"}</div><div class="sub">{_esc(source_row["accuracy"]) if source_row else "미수집"} · {latest_at}</div></div>'
+        f'<div class="kpi"><span class="label">댓글</span><div class="figure num">{len(comments)}</div><div class="sub">자동 수집</div></div>'
+        f'<div class="kpi"><span class="label">{third[1]}</span><div class="figure num">{third[0]}</div><div class="sub">{third[2]}</div></div>'
+    )
+    chart = (f'<div class="chart">{charts.area_chart_svg(series, labels=[d[5:].replace("-", ".") for d in dates], width=420, height=140, pad_right=52)}</div>'
+             if len(series) >= 3 else ui.empty_state("추이는 수집 3회부터 표시됩니다", f"현재 {len(series)}회"))
+    if is_ig:
+        rank_block = ui.section_header("네이버 순위 추이", right_html='<span class="rank none">인스타 콘텐츠는 대상 아님</span>') + '<div class="empty" style="border:0;padding:6px 0 0">네이버 순위는 블로그·카페·커뮤니티 콘텐츠에서만 추적됩니다.</div>'
+    else:
+        hist = rank_history([r for r in ctx["all_ranks"] if r["content_id"] == content_id])
+        ranks = [r for _, r in hist if r]
+        latest = latest_rank_row(ctx["all_ranks"], content_id)
+        rank_block = ui.section_header("네이버 순위 추이", right_html=(f'{ui.rank_badge(latest["rank"])} <span class="label">{_esc(latest["keyword"])} · {_esc(latest.get("search_tab", "").replace("API", ""))}</span>' if latest else ui.rank_badge(None)))
+        rank_block += (f'<div class="chart">{charts.rank_chart_svg(ranks, width=420, height=90)}</div>' if len(ranks) >= 2 else ui.empty_state("아직 측정된 순위가 없습니다", "키워드 수집 후 표시됩니다."))
+    cm = "".join(f'<div class="cm"><span><b>{_esc(k.get("author_nickname") or "익명")}</b>{_esc(k["text"])}</span><small>{_esc((k.get("commented_at") or "")[:10])}</small></div>' for k in comments[:8]) \
+        or ui.empty_state("수집된 댓글이 없습니다", "카페·인스타 댓글은 매일 06:30 수집됩니다.")
+    st.markdown(
+        f'<aside class="detail"><div class="dh"><div><h2>{_esc(c.get("title") or c["url"])}</h2>'
+        f'<div class="meta">{ui.channel_icon(c["channel"])}{ui.CHANNEL_LABEL.get(c["channel"], c["channel"])} · {_esc((c.get("release_at") or "미정")[:10])} 게시 · <a href="{_esc(c["url"])}" target="_blank" rel="noopener noreferrer">원문 열기 ↗</a></div></div></div>'
+        f'<div class="kpis">{kpis}</div>'
+        + ui.section_header(f"{primary_label} 추이", right_html=f'<span class="label">{len(series)}회 수집</span>') + chart
+        + rank_block
+        + ui.section_header(f"댓글 {len(comments)}") + cm
+        + "</aside>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_content_table(ctx, *, limit=None) -> None:
+    rows = _content_rows(ctx)
+    if limit:
+        rows = rows[:limit]
+    vmax = max((r[1] for r in rows), default=0) or 1
+    body = []
+    for c, pv, spark, n_comments, rank in rows:
+        unit = "좋아요" if c["channel"] == "instagram" else "조회"
+        body.append([
+            f'<span class="who">{_esc(c.get("title") or c["url"])}</span>',
+            f'<span class="ch-cell">{ui.channel_icon(c["channel"])}<span class="label">{ui.CHANNEL_LABEL.get(c["channel"], c["channel"])}</span></span>',
+            f'<span class="mono label">{_esc((c.get("release_at") or "")[:10])}</span>',
+            f'<div class="spark chart">{spark}</div>',
+            f'{ui.inline_bar(pv / vmax * 100)}<span class="mono">{pv:,}</span> <span class="label">{unit}</span>',
+            f'<span class="mono">{n_comments or "—"}</span>',
+            ui.rank_badge(rank["rank"] if rank else None, "—") if c["channel"] != "instagram" else '<span class="label">—</span>',
+        ])
+    st.markdown(ui.table_html([("콘텐츠", False), ("채널", False), ("게시일", False), ("추이", False), ("조회 · 좋아요", True), ("댓글", True), ("순위", True)], body), unsafe_allow_html=True)
+
+
+def render_share_section(ctx, terms: list[dict], weighted: bool) -> None:
+    """키워드 점유율(스펙 §7) — 키워드×탭 슬롯에서 제목에 브랜드가 매칭된 비율.
+
+    브랜드 사전이 비어 있으면 집계할 대상이 없으므로 빈 상태만 보여준다.
+    """
+    from report_dashboard import share
+
+    ours = share.ours_brand_of(terms)
+    if not terms or not ctx["target_keywords"] or ours is None:
+        if terms and ours is not None and not ctx["target_keywords"]:
+            empty = ui.empty_state("추적 키워드가 없어 점유율을 계산할 수 없습니다", "등록·관리자에서 키워드를 등록하면 다음 수집부터 집계됩니다.")
+        else:
+            empty = ui.empty_state("점유율 브랜드 사전이 없습니다", "담당자가 등록·관리자 → 키워드 섹션에서 브랜드 사전을 입력하면 집계됩니다.")
+        st.markdown(ui.section_header("키워드 점유율") + empty, unsafe_allow_html=True)
+        return
+    rows = share.keyword_share_rows(ctx["keyword_serp_for_campaign"], ctx["target_keywords"], SERP_TABS, terms, weighted=weighted)
+    tot = share.total_share(rows, ours)
+    order = [ours] + tot["top_brands"]
+    color_of = {b: _SHARE_COLORS[i] for i, b in enumerate(order)}
+    legend = "".join(f'<span><i class="dot" style="background:{color_of[b]}"></i>{_esc(b)}</span>' for b in order) + \
+        f'<span><i class="dot" style="background:{_SHARE_COLORS[3]}"></i>미매칭 슬롯</span>'
+    row_html = []
+    for r in rows:
+        segs = [(color_of[b], r["by_brand"].get(b, 0) / r["denominator"] * 100) for b in order]
+        others = sum(v for b, v in r["by_brand"].items() if b not in order)
+        segs.append((_SHARE_COLORS[3], others / r["denominator"] * 100))
+        ours_pct = r["ours_score"] / r["denominator"] * 100
+        row_html.append(
+            f'<div class="sh"><span class="k">{_esc(r["keyword"])}<small>{r["tab"].replace("API", "")}</small></span>'
+            f'{charts.stack_bar_html(segs, ours_index=0)}'
+            f'<span class="v">{ours_pct:.0f}%<small>{_esc(ours)} {r["ours_score"]}/{r["denominator"]}</small></span></div>'
+        )
+    total_segs = [(color_of[b], tot["by_brand"].get(b, 0)) for b in order] + [(_SHARE_COLORS[3], tot["other_pct"])]
+    lg = "".join(
+        f'<div><span><i class="dot" style="background:{color_of[b]}"></i> {_esc(b)}</span><b>{tot["by_brand"].get(b, 0):.1f}%</b></div>'
+        for b in order
+    ) + f'<div><span><i class="dot" style="background:{_SHARE_COLORS[3]}"></i> 미매칭 슬롯</span><b>{tot["other_pct"]:.1f}%</b></div>'
+    trend = share.share_trend(ctx["keyword_serp_for_campaign"], ctx["target_keywords"], SERP_TABS, terms)
+    trend_html = (
+        f'<div class="chart">{charts.area_chart_svg([p for _, p in trend], labels=[a[5:10].replace("-", ".") for a, _ in trend], width=360, height=110, pad_right=50)}</div>'
+        if len(trend) >= 3 else ui.empty_state("추이는 수집 3회부터 표시됩니다", f"현재 {len(trend)}회 수집")
+    )
+    st.markdown(
+        ui.section_header(
+            "키워드 점유율",
+            sub=f"키워드×탭 상위 10 슬롯 중 제목에 브랜드가 매칭된 비율 · 분모 {tot['denominator']}",
+            right_html=f'<div class="legend">{legend}</div>',
+        )
+        + f'<div class="share-grid"><div>{"".join(row_html)}</div><div class="share-side">'
+        f'<div class="label">전체 {tot["denominator"]}슬롯 브랜드 분포</div>{charts.stack_bar_html(total_segs, ours_index=0, height=16)}'
+        f'<div class="stack-lg">{lg}</div><div class="label" style="margin-top:18px">{_esc(ours)} 점유율 추이</div>{trend_html}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_serp_columns(ctx, keyword: str) -> None:
+    """실제 SERP 상위 10 두 탭(블로그API·카페API)을 나란히 보여준다.
+
+    우리 콘텐츠(content_id 있는 행)만 .srow.ours로 강조하고, 목록에 안 잡힌
+    10위 밖 매치는 탭마다 별도 노트로 붙인다.
+    """
+    cols_html = []
+    for tab in SERP_TABS:
+        rows = latest_keyword_serp(ctx["keyword_serp_for_campaign"], keyword, tab)
+        ours_n = sum(1 for r in rows if r["content_id"])
+        items = "".join(
+            f'<a class="srow{" ours" if r["content_id"] else ""}" href="{_esc(r["url"])}" target="_blank" rel="noopener noreferrer">'
+            f'<span class="r">{r["rank"]}</span><span class="t">{_esc(r.get("title") or r["url"])}</span>'
+            f'<span class="src">{"우리 콘텐츠" if r["content_id"] else tab.replace("API", "")}</span></a>'
+            for r in rows
+        ) or ui.empty_state("아직 수집 전입니다", "다음 06:00 수집 후 표시됩니다.")
+        visible = {r["content_id"] for r in rows if r["content_id"]}
+        beyond = [r for r in latest_matched_ranks(ctx["keyword_ranks_for_campaign"], keyword, tab) if r["content_id"] not in visible]
+        beyond_html = "".join(
+            f'<div class="beyond"><span class="label">10위 밖 우리 콘텐츠</span>{ui.rank_badge(r["rank"])}'
+            f'<span>「{_esc((ctx["contents_by_id"].get(r["content_id"]) or {}).get("title") or r["content_id"])}」</span></div>'
+            for r in beyond
+        ) or '<div class="beyond"><span class="label">10위 밖 우리 콘텐츠</span><span class="rank none">없음</span></div>'
+        cols_html.append(
+            f'<div><div class="serp-h"><h3 class="h-sec">{tab.replace("API", "")}</h3><span class="label">우리 콘텐츠 {ours_n}</span>'
+            f'<span class="sp"></span><span class="label">"{_esc(keyword)}"</span></div>{items}{beyond_html}</div>'
+        )
+    st.markdown(f'<div class="serp">{"".join(cols_html)}</div>', unsafe_allow_html=True)
+
+
+def render_watchlist_rail(ctx, impact_week, impact_rows, score_unit) -> None:
+    """우측 레일 — 캠페인 키워드 순위 워치리스트 · 채널별 네이버 노출 · 주간 키워드 파급력."""
+    summary = keyword_rank_summary(ctx["keyword_ranks_for_campaign"], ctx["target_keywords"])
+    wl = []
+    for kw, by_tab in summary.items():
+        for tab in SERP_TABS:
+            rows = by_tab.get(tab, [])
+            matched = [r for r in rows if r["rank"] is not None]
+            best = min((r["rank"] for r in matched), default=None)
+            hist = rank_history([r for r in ctx["keyword_ranks_for_campaign"] if r["keyword"] == kw and r.get("search_tab") == tab and r.get("rank")])
+            ranks = [r for _, r in hist if r]
+            spark = charts.rank_chart_svg(ranks, width=90, height=22) if len(ranks) >= 2 else ""
+            # rank_history는 captured_at을 원문(시간 포함) 그대로 키로 쓴다 — delta_over_days는
+            # 순수 날짜 문자열(YYYY-MM-DD)을 요구하므로(date.fromisoformat) 여기서 앞 10자로 자른다.
+            cal_series = [(d[:10], r) for d, r in hist if r]
+            dd = delta_over_days(cal_series, 7)
+            if dd is None:
+                d_html = ui.delta("—", "flat")
+            else:
+                dv, span = dd
+                if dv < 0:
+                    d_html = ui.delta(f"▲{-dv} · {span}d", "up")
+                elif dv > 0:
+                    d_html = ui.delta(f"▼{dv} · {span}d", "down")
+                else:
+                    d_html = ui.delta(f"— · {span}d", "flat")
+            wl.append(f'<div class="wl"><span class="k">{_esc(kw)}<small>{tab.replace("API", "")}</small></span><span class="rk">{ui.rank_badge(best, "—")}</span><div class="spark chart">{spark}</div>{d_html}</div>')
+    exposure = exposure_counts_by_channel(ctx["contents"], ctx["all_ranks"])
+    by_ch = channel_distribution(ctx["contents"])
+    ch_html = "".join(
+        f'<div class="ch-row"><span class="n"><i class="dot" style="background:var(--ch-{ch})"></i>{ui.CHANNEL_LABEL.get(ch, ch)}</span>'
+        f'<div class="hbar grow"><i style="width:{round(exposure.get(ch, 0) / n * 100) if n else 0}%;background:var(--ch-{ch})"></i></div>'
+        f'<span class="v num">{exposure.get(ch, 0)}<small>/ {n}</small></span></div>'
+        for ch, n in by_ch.items() if ch != "instagram"
+    )
+    lead = "".join(
+        f'<div class="lead"><span class="n">{r["rank"]}</span><span>{_esc(r["keyword"])}</span>'
+        f'<span class="label">{"NEW" if r["delta"] is None else f"지난주 대비 {r["delta"]:+d}"}</span><span class="v">{r["score"]:,}{score_unit}</span></div>'
+        for r in impact_rows
+    ) if impact_rows else ui.empty_state("아직 집계할 주간 데이터가 없습니다", "다음 주 수집부터 순위 변동과 함께 채워집니다.")
+    st.markdown(
+        ui.section_header("캠페인 키워드 순위", right_html='<span class="label">최고 순위 · 7일 변동(달력)</span>') + "".join(wl)
+        + ui.section_header("채널별 네이버 노출", right_html='<span class="label">100위 내</span>')
+        + (ch_html or ui.empty_state("네이버 추적 대상 채널이 없습니다", "카페·블로그·커뮤니티 콘텐츠만 순위를 추적합니다."))
+        + ui.section_header("주간 키워드 파급력", right_html=f'<span class="label">{week_label(impact_week) if impact_week else ""}</span>') + lead,
+        unsafe_allow_html=True,
+    )

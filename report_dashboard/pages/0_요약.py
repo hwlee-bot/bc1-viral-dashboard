@@ -1,14 +1,5 @@
-"""요약 카드. 마녀공장 마스터 브랜드 옐로우 헤더 + 겹치는 히어로 메트릭 +
-최근 자동 수집 로그 + 채널 분포. 목업: redesign-v2-summary.html.
-
-이 페이지를 AppTest로 직접 실행하면 라우터를 거치지 않으므로, 게이트를
-여기서도 호출한다(1_상위노출.py 상단 주석과 같은 이유).
-"""
-
-import html as html_lib
-import os
-import sys
-
+"""요약 — 스펙 §5.1. 제목 블록 / 스탯 스트립 / 잉크 선 누적 조회수 차트 / 키워드 순위 표 + 채널 분포 / 콘텐츠 상위 8."""
+import os, sys
 _here = os.path.abspath(__file__)
 _repo_root = _here[: _here.index(os.sep + "report_dashboard" + os.sep)]
 if _repo_root not in sys.path:
@@ -16,159 +7,103 @@ if _repo_root not in sys.path:
 
 import streamlit as st
 
+from report_dashboard import charts, ui
 from report_dashboard.auth import require_role
-from report_dashboard.design_system import inject_base_fonts
-from report_dashboard.reporting import channel_distribution
+from report_dashboard.design_system import inject_design_system
+from report_dashboard.header import render_header
+from report_dashboard.report_common import CHANNELS, load_campaign_context, render_content_table, render_export_button
 from report_dashboard.repo import ReportRepo
+from report_dashboard.reporting import (
+    average_participation_rate, channel_distribution, daily_view_series, delta_over_days,
+    keyword_rank_summary, latest_matched_ranks, latest_sync_timestamp, likes_total,
+)
 
 role, email = require_role()
-
 repo = ReportRepo()
-
-_CHANNEL_LOG_COLOR = {"blog": "#3a5ac4", "cafe": "#c9a86a", "community": "#8a6fd6", "instagram": "#d6478a", "youtube": "#e2453e"}
-_DONUT_COLORS = _CHANNEL_LOG_COLOR
-
-
-def _esc(value) -> str:
-    return html_lib.escape(str(value))
-
-
-_STYLE = """
-<style>
-.vr-sum-amb {
-  position: relative; margin: -1rem -1rem 0; padding: 36px 32px 64px; overflow: hidden;
-  background: linear-gradient(135deg, #ffe066 0%, #fbc02d 55%, #f2a30f 100%);
-}
-.vr-sum-amb::after {
-  content: ""; position: absolute; inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-  mix-blend-mode: overlay; pointer-events: none;
-}
-.vr-sum-top { display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 1; }
-.vr-sum-brand { font-size: 13px; font-weight: 600; color: rgba(30,22,0,0.85); }
-.vr-sum-brand span { color: #7a4a00; }
-.vr-sum-user { font-size: 11px; color: rgba(30,22,0,0.55); }
-.vr-sum-greet { position: relative; z-index: 1; margin-top: 28px; font-size: 30px; font-weight: 700; color: #1e1600; letter-spacing: -0.02em; }
-.vr-sum-sub { position: relative; z-index: 1; margin-top: 6px; font-size: 13px; color: rgba(30,22,0,0.6); font-weight: 500; }
-
-.vr-sum-metrics { position: relative; z-index: 2; margin: -40px 0 0; background: #fff; border-radius: 16px; display: grid; grid-template-columns: 1.6fr 1fr; box-shadow: 0 12px 32px -12px rgba(30,25,15,0.18), 0 1px 0 rgba(30,25,15,0.04); }
-.vr-metric-hero { padding: 26px 28px; border-right: 1px solid #f0ede8; }
-.vr-metric-hero-label { font-size: 11px; font-weight: 600; color: #a39c8c; text-transform: uppercase; letter-spacing: 0.05em; }
-.vr-metric-hero-num { font-size: 46px; font-weight: 800; color: #1c1a16; line-height: 1; margin-top: 10px; letter-spacing: -0.02em; }
-.vr-metric-side { display: flex; flex-direction: column; }
-.vr-metric-mini { flex: 1; padding: 18px 24px; display: flex; flex-direction: column; justify-content: center; }
-.vr-metric-mini + .vr-metric-mini { border-top: 1px solid #f0ede8; }
-.vr-metric-mini-label { font-size: 10px; font-weight: 600; color: #a39c8c; text-transform: uppercase; letter-spacing: 0.05em; }
-.vr-metric-mini-num { font-size: 22px; font-weight: 700; color: #1c1a16; margin-top: 4px; }
-
-.vr-sum-section { padding: 32px 0 8px; }
-.vr-sum-section-title { font-size: 15px; font-weight: 700; color: #1c1a16; margin-bottom: 16px; }
-.vr-log-row { display: grid; grid-template-columns: 3px 1fr 56px; align-items: center; gap: 16px; padding: 13px 8px; border-radius: 8px; }
-.vr-log-bar { width: 3px; height: 30px; border-radius: 3px; }
-.vr-log-title { font-size: 13px; font-weight: 600; color: #262420; }
-.vr-log-meta { font-size: 11px; color: #a39c8c; margin-top: 2px; font-weight: 500; }
-.vr-log-num { font-size: 15px; font-weight: 700; color: #1c1a16; text-align: right; }
-
-.vr-stackbar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: #eee9df; margin-bottom: 14px; }
-.vr-stackbar div { height: 100%; }
-.vr-legend { display: flex; gap: 20px; flex-wrap: wrap; }
-.vr-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #57524a; font-weight: 600; }
-.vr-legend-dot { width: 8px; height: 8px; border-radius: 2px; }
-.vr-legend-num { color: #a39c8c; font-weight: 500; }
-</style>
-"""
-
-inject_base_fonts()
-st.markdown(_STYLE, unsafe_allow_html=True)
+inject_design_system()
 
 campaigns = repo.campaigns()
-contents = repo.contents()
-metrics = repo.content_metrics()
-# auto_instagram 행은 views=0 관례 sentinel이라(실제 조회수 아님, 스펙 §4.2),
-# 조회수 참고 숫자를 계산하는 모든 자리에서 반드시 제외해야 한다 — 안 그러면
-# 매일 쌓이는 이 행이 사람이 입력한 진짜 조회수를 조용히 덮어써 버린다.
-view_metrics = [m for m in metrics if m.get("source") != "auto_instagram"]
+campaign_id = render_header(role, email, campaigns, current="요약")
+if campaign_id is None:
+    st.markdown(ui.empty_state("등록된 캠페인이 없습니다", "담당자가 등록·관리자 페이지에서 캠페인을 추가하면 여기에 표시됩니다."), unsafe_allow_html=True)
+    st.stop()
+campaign = next(c for c in campaigns if c["campaign_id"] == campaign_id)
 
-st.markdown(
-    f"""
-<div class="vr-sum-amb">
-  <div class="vr-sum-top">
-    <div class="vr-sum-brand">바이럴 <span>리포팅</span></div>
-    <div class="vr-sum-user">{_esc(email)}</div>
-  </div>
-  <div class="vr-sum-greet">안녕, 오늘의 요약이야</div>
-  <div class="vr-sum-sub">캠페인별 조회수·네이버 순위 추이를 누적해서 본다</div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+# 제목 블록은 여기서 빈 슬롯만 잡아둔다(화면상 맨 위) — 실제 내용(메타 문구)은
+# ctx가 갖춰진 뒤에 채운다. 컨트롤 행(채널 필터·내보내기)이 슬롯 다음 자리를
+# 차지해야 제목 밑·스탯 스트립 위에 오므로, 위젯 자체는 슬롯보다 나중에
+# "생성"하되 st.pills 값은 load_campaign_context보다 먼저 있어야 한다.
+title_slot = st.empty()
+ctrl_cols = st.columns([5, 1.4])
+with ctrl_cols[0]:
+    channels = st.pills("채널", options=CHANNELS, default=CHANNELS, selection_mode="multi", key="channel_filter",
+                        format_func=lambda c: ui.CHANNEL_LABEL.get(c, c), label_visibility="collapsed") or CHANNELS
+with ctrl_cols[1]:
+    export_slot = st.empty()
 
-total_views = sum(m["views"] for m in view_metrics)
-st.markdown(
-    f"""
-<div class="vr-sum-metrics">
-  <div class="vr-metric-hero">
-    <div class="vr-metric-hero-label">누적 조회수 관측값</div>
-    <div class="vr-metric-hero-num">{total_views:,}</div>
-  </div>
-  <div class="vr-metric-side">
-    <div class="vr-metric-mini"><div class="vr-metric-mini-label">캠페인</div><div class="vr-metric-mini-num">{len(campaigns)}</div></div>
-    <div class="vr-metric-mini"><div class="vr-metric-mini-label">등록 콘텐츠</div><div class="vr-metric-mini-num">{len(contents)}</div></div>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+ctx = load_campaign_context(repo, campaign_id, channels)
+if ctx is None:
+    st.markdown(ui.empty_state("등록된 콘텐츠가 없습니다", "콘텐츠가 등록되고 첫 수집이 끝나면 숫자가 채워집니다."), unsafe_allow_html=True)
+    st.stop()
 
-st.markdown('<div class="vr-sum-section"><div class="vr-sum-section-title">최근 자동 수집</div></div>', unsafe_allow_html=True)
+contents, view_metrics, all_metrics = ctx["contents"], ctx["view_metrics"], ctx["all_metrics"]
+series = daily_view_series(view_metrics)
+total_views = series[-1][1] if series else 0
+d7 = delta_over_days(series, 7)
+comments_n = len(ctx["all_comments"])
+kw_summary = keyword_rank_summary(ctx["keyword_ranks_for_campaign"], ctx["target_keywords"])
+best = None
+for kw, by_tab in kw_summary.items():
+    for tab, rows in by_tab.items():
+        for r in rows:
+            if r["rank"] is not None and (best is None or r["rank"] < best[0]):
+                best = (r["rank"], kw, tab, r["content_id"])
 
-if not metrics:
-    st.caption("아직 자동 수집 기록이 없다 — 등록·관리자 페이지에서 수동으로 값을 넣을 수 있다.")
+period = f"{campaign.get('start_date') or '—'} – {campaign.get('end_date') or '진행 중'}"
+meta = (f"<b>{ui.esc(period)}</b> · 콘텐츠 {len(contents)}건 · 채널 {len(channel_distribution(contents))}개 · "
+        f"추적 키워드 {len(ctx['target_keywords'])}개 · 마지막 수집 {ui.esc(latest_sync_timestamp(all_metrics) or '없음')}")
+with title_slot:
+    st.markdown(ui.title_block(campaign["name"], meta), unsafe_allow_html=True)
+render_export_button(campaign, ctx, container=export_slot)
+
+spark_views = charts.sparkline_svg([v for _, v in series]) if len(series) >= 2 else ""
+rank_side = ui.big_rank(best[0], f"{best[1]} · {best[2].replace('API', '')}") if best else ui.spark_box("")
+stats = [
+    ui.stat("누적 조회수", f"{total_views:,}", ui.spark_box(spark_views),
+            (ui.delta(f"+{d7[0]:,} · {d7[1]}d", "up") if d7[0] > 0 else
+             ui.delta(f"{d7[0]:,} · {d7[1]}d", "down") if d7[0] < 0 else
+             ui.delta(f"변동 없음 · {d7[1]}d", "flat")) if d7 else ui.delta(f"수집 {len(series)}일차", "flat")),
+    ui.stat("등록 콘텐츠", f"{len(contents)}<small>건</small>", ui.spark_box(""), ui.delta(f"인스타 좋아요 합 {likes_total(all_metrics, contents):,}", "flat")),
+    ui.stat("수집 댓글", f"{comments_n}<small>건</small>", ui.spark_box(""), ui.delta("카페·인스타 자동 수집", "flat")),
+    ui.stat("네이버 상위노출", f"{1 if best else 0}<small>/ {len(ctx['target_keywords'])} 키워드</small>", rank_side,
+            ui.delta((ctx["contents_by_id"].get(best[3]) or {}).get("title", "") if best else "아직 노출 없음", "flat")),
+]
+st.markdown(ui.stat_strip(stats) + '<hr class="rule">', unsafe_allow_html=True)
+
+right = '<span class="label"><i class="dot" style="background:var(--ink)"></i> 전체 누적</span>'
+st.markdown(ui.section_header("조회수 추이", right_html=right), unsafe_allow_html=True)
+if len(series) >= 3:
+    st.markdown(f'<div class="chart hero-chart">{charts.area_chart_svg([v for _, v in series], labels=[d[5:].replace("-", ".") for d, _ in series], width=1140, height=230, pad_right=64, ink=True)}</div>', unsafe_allow_html=True)
 else:
-    contents_by_id = {c["content_id"]: c for c in contents}
-    recent = sorted(view_metrics, key=lambda m: m["captured_at"], reverse=True)[:5]
+    st.markdown(ui.empty_state("추이를 그릴 데이터가 아직 부족합니다", "수집일이 3일 이상 쌓이면 곡선이 나타납니다."), unsafe_allow_html=True)
+
+left, rightcol = st.columns([7, 5], gap="large")
+with left:
     rows = []
-    for metric in recent:
-        content = contents_by_id.get(metric["content_id"])
-        if not content:
-            continue
-        color = _CHANNEL_LOG_COLOR.get(content["channel"], "#a39c8c")
-        title = _esc(content.get("title") or content["url"])
-        rows.append(
-            f'<div class="vr-log-row">'
-            f'<div class="vr-log-bar" style="background:{color};"></div>'
-            f'<div><div class="vr-log-title">{title}</div>'
-            f'<div class="vr-log-meta">{_esc(content["channel"])} · {_esc(metric["captured_at"][:10])} 수집</div></div>'
-            f'<div class="vr-log-num">{metric["views"]:,}</div>'
-            f"</div>"
-        )
-    if rows:
-        st.markdown("".join(rows), unsafe_allow_html=True)
-    else:
-        st.caption("최근 수집된 항목의 콘텐츠 정보를 찾을 수 없다.")
+    for kw in ctx["target_keywords"]:
+        for tab in ("카페API", "블로그API"):
+            matched = latest_matched_ranks(ctx["keyword_ranks_for_campaign"], kw, tab)
+            if matched:
+                m = min(matched, key=lambda r: r["rank"])
+                rows.append([ui.esc(kw), f'<span class="label">{tab.replace("API", "")}</span>', ui.esc((ctx["contents_by_id"].get(m["content_id"]) or {}).get("title") or m["content_id"]), ui.rank_badge(m["rank"])])
+            else:
+                rows.append([ui.esc(kw), f'<span class="label">{tab.replace("API", "")}</span>', '<span class="label">—</span>', ui.rank_badge(None)])
+    st.markdown(ui.section_header("네이버 키워드 순위", right_html='<a href="상위노출">상위노출 →</a>') + ui.table_html([("키워드", False), ("탭", False), ("노출 콘텐츠", False), ("순위", True)], rows), unsafe_allow_html=True)
+with rightcol:
+    avg = average_participation_rate(contents, view_metrics)
+    st.markdown(ui.section_header("채널 분포") + ui.channel_rows(channel_distribution(contents)) +
+                f'<div class="mini"><div><span class="label">평균 참여율</span><div class="figure num">{f"{avg:.1f}" if avg is not None else "—"}<small>%</small></div></div>'
+                f'<div><span class="label">수집 댓글</span><div class="figure num">{comments_n}<small>건</small></div></div></div>', unsafe_allow_html=True)
 
-st.markdown('<div class="vr-sum-section"><div class="vr-sum-section-title">채널 분포</div></div>', unsafe_allow_html=True)
-
-distribution = channel_distribution(contents)
-if not distribution:
-    st.caption("아직 등록된 콘텐츠가 없다.")
-else:
-    total = sum(distribution.values())
-    ordered = sorted(distribution.items(), key=lambda kv: kv[1], reverse=True)
-    bars, legend = [], []
-    for channel, count in ordered:
-        pct = count / total * 100
-        color = _DONUT_COLORS.get(channel, "#a39c8c")
-        bars.append(f'<div style="width:{pct:.2f}%; background:{color};"></div>')
-        legend.append(
-            f'<div class="vr-legend-item"><span class="vr-legend-dot" style="background:{color};"></span>'
-            f'{_esc(channel)} <span class="vr-legend-num">{count}건</span></div>'
-        )
-    st.markdown(
-        f'<div class="vr-stackbar">{"".join(bars)}</div><div class="vr-legend">{"".join(legend)}</div>',
-        unsafe_allow_html=True,
-    )
-
-latest_run = repo.latest_collection_run()
-if latest_run:
-    st.caption(f"마지막 자동 수집: {latest_run.get('started_at', '')}")
+st.markdown(ui.section_header("콘텐츠 성과", sub=f"{len(contents)}건 중 상위 8", right_html='<a href="콘텐츠_성과">전체 →</a>'), unsafe_allow_html=True)
+render_content_table(ctx, limit=8)

@@ -227,3 +227,12 @@ class ReportRepo:
         if not runs:
             return None
         return max(enumerate(runs), key=lambda pair: (pair[1].get("started_at", ""), pair[0]))[1]
+
+    # -- 점유율 브랜드 사전 (2026-09-03 신규, latest by (campaign_id, brand)) --------
+
+    def brand_terms(self, campaign_id: str) -> list[dict]:
+        rows = self.store.latest("viral_brand_terms", ("campaign_id", "brand"))
+        return [r for r in rows if r.get("campaign_id") == campaign_id]
+
+    def save_brand_terms(self, row: dict) -> None:
+        self.store.save("viral_brand_terms", row)

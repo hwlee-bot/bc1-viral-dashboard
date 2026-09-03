@@ -1,0 +1,20 @@
+# .streamlit/config.toml — 비밀 없음, 커밋 대상. 배포 미러에도 같은 파일이 있어야 한다.
+[server]
+headless = true
+
+[client]
+toolbarMode = "viewer"   # ⋮ 메뉴에 System/Light/Dark 테마 스위처가 뜬다(스파이크 실측)
+
+[theme]
+base = "light"
+primaryColor = "#f0b90b"
+backgroundColor = "#f4f4f1"
+secondaryBackgroundColor = "#efefeb"
+textColor = "#131311"
+font = "sans-serif"
+
+[theme.dark]
+primaryColor = "#f5c542"
+backgroundColor = "#0f0f0e"
+secondaryBackgroundColor = "#232321"
+textColor = "#f3f2ec"

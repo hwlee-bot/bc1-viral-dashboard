@@ -355,9 +355,15 @@ def keyword_impact_leaderboard(weekly_scores: dict[str, dict[str, int]]) -> tupl
 
 
 def build_export_markdown(
-    campaign_label: str, contents: list[dict], metrics: list[dict], ranks: list[dict], comments: list[dict]
+    campaign_label: str, contents: list[dict], metrics: list[dict], ranks: list[dict], comments: list[dict],
+    *, share_summary: dict | None = None,
 ) -> str:
     lines = [f"# {campaign_label} 성과 리포트", ""]
+    if share_summary:
+        lines += ["## 키워드 점유율", f"- 분모: 키워드×탭 상위 10 슬롯 {share_summary['denominator']}개",
+                  f"- {share_summary.get('ours_brand') or '우리 브랜드'} {share_summary['ours_pct']:.1f}% · 캠페인 콘텐츠 {share_summary['campaign_pct']:.1f}%"]
+        lines += [f"- {b} {p:.1f}%" for b, p in share_summary["by_brand"].items() if b != share_summary.get("ours_brand")]
+        lines.append("")
     for content in contents:
         cid = content["content_id"]
         lines.append(f"## {content.get('title') or content['url']} ({content['channel']})")
@@ -379,3 +385,67 @@ def build_export_markdown(
 
         lines.append("")
     return "\n".join(lines)
+
+
+def daily_view_series(view_metrics: list[dict]) -> list[tuple[str, int]]:
+    """날짜별 누적 조회수 곡선. 각 날짜에 대해 '콘텐츠마다 그날까지 관측된 최신 조회수'를 더한다.
+    auto_instagram sentinel은 호출부가 이미 view_metrics에서 뺀 상태여야 한다."""
+    if not view_metrics:
+        return []
+    days = sorted({m["captured_at"][:10] for m in view_metrics})
+    by_content: dict[str, list[dict]] = defaultdict(list)
+    for m in view_metrics:
+        by_content[m["content_id"]].append(m)
+    series = []
+    for day in days:
+        total = 0
+        for rows in by_content.values():
+            upto = [r for r in rows if r["captured_at"][:10] <= day]
+            if upto:
+                total += max(upto, key=lambda r: r["captured_at"])["views"]
+        series.append((day, total))
+    return series
+
+
+def likes_total(all_metrics: list[dict], contents: list[dict]) -> int:
+    total = 0
+    for c in contents:
+        if c["channel"] != "instagram":
+            continue
+        hist = likes_history([m for m in all_metrics if m["content_id"] == c["content_id"]])
+        if hist:
+            total += hist[-1][1]
+    return total
+
+
+def latest_collection_runs_by_type(runs: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for i, r in enumerate(runs):
+        t = r.get("run_type", "content_metrics")
+        cur = out.get(t)
+        if cur is None or (r.get("started_at", ""), i) > (cur.get("started_at", ""), cur["_i"]):
+            out[t] = {**r, "_i": i}
+    for v in out.values():
+        v.pop("_i", None)
+    return out
+
+
+def delta_over_days(series: list[tuple[str, int]], days: int = 7) -> tuple[int, int] | None:
+    """`series`(오름차순 (YYYY-MM-DD, 누적값))에서, 마지막 날짜 기준 최소 `days`일
+    전(달력 기준, ≤ last_date - days)인 가장 늦은 지점을 기준점으로 삼아
+    (증감값, 실제 경과일수)를 돌려준다. 그런 기준점이 없으면(수집 이력이
+    days일보다 짧으면) None — 호출부가 '수집 N일차'로 정직하게 대체 표시해야
+    한다(스펙 §8: 포인트 개수를 날짜 수로 착각해 임의 구간을 '7d'로 표시하지 않기)."""
+    if len(series) < 2:
+        return None
+    last_date = date.fromisoformat(series[-1][0])
+    cutoff = last_date.fromordinal(last_date.toordinal() - days)
+    base = None
+    for d, v in series[:-1]:
+        if date.fromisoformat(d) <= cutoff:
+            base = (d, v)
+    if base is None:
+        return None
+    base_date, base_value = base
+    span = (last_date - date.fromisoformat(base_date)).days
+    return series[-1][1] - base_value, span
