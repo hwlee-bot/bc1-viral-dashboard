@@ -78,7 +78,14 @@ def area_chart_svg(values, *, labels=None, width=720, height=200, pad_right=60, 
     )
 
 
-def sparkline_svg(values, *, width=112, height=30, ink=True) -> str:
+def sparkline_svg(values, *, width=112, height=30, ink=True, animate=True) -> str:
+    """`animate=False`는 등장 모션(`draw`/`fade-late`) 없이 처음부터 다 그려진 선을 낸다.
+
+    콘텐츠 성과 리스트처럼 한 화면에 스파크가 수십 개씩 들어가는 표에서는 IntersectionObserver가
+    아래쪽 행을 스크롤 도중엔 하나도 못 잡고 문서 바닥에서만 한꺼번에 그리는 문제가 있어(§13
+    `flushBottom`과의 상호작용), 그 표만 정적으로 둔다(팀장님 요청 2026-09-07). 다른 자리(통계
+    스트립·상세 패널 등)는 인자를 안 주면 그대로 모션이 붙는다.
+    """
     if len(values) < 2:
         return ""
     pts = _points(values, width, height, 2, 6, 4, 4)
@@ -86,10 +93,15 @@ def sparkline_svg(values, *, width=112, height=30, ink=True) -> str:
     length = round(path_length(pts))
     ink_cls = " ink" if ink else ""
     lx, ly = pts[-1]
+    if animate:
+        line_cls, end_cls = f"ln draw{ink_cls}", f"end fade-late{ink_cls}"
+        dash = f' stroke-dasharray="{length}" stroke-dashoffset="{length}"'
+    else:
+        line_cls, end_cls, dash = f"ln{ink_cls}", f"end{ink_cls}", ""
     return (
         f'<svg viewBox="0 0 {width} {height}" style="aspect-ratio:{width}/{height}">'
-        f'<path class="ln draw{ink_cls}" d="{d}" stroke-dasharray="{length}" stroke-dashoffset="{length}"/>'
-        f'<circle class="end fade-late{ink_cls}" cx="{lx:.1f}" cy="{ly:.1f}" r="4"/></svg>'
+        f'<path class="{line_cls}" d="{d}"{dash}/>'
+        f'<circle class="{end_cls}" cx="{lx:.1f}" cy="{ly:.1f}" r="4"/></svg>'
     )
 
 

@@ -167,7 +167,9 @@ def _content_rows(ctx):
         metrics = sorted((m for m in ctx["all_metrics"] if m["content_id"] == cid), key=lambda m: m["captured_at"])
         pv = _primary_metric_value(c, ctx["view_metrics"], ctx["all_metrics"])
         series = [v for _, v in likes_history(metrics)] if c["channel"] == "instagram" else [m["views"] for m in metrics if m.get("source") != "auto_instagram"]
-        spark = charts.sparkline_svg(series, width=84, height=22) if len(series) >= 2 else ""
+        # animate=False: 이 표는 행이 많아 스크롤 중 등장 모션이 아래쪽 행에서 안정적으로
+        # 안 걸린다(charts.sparkline_svg 주석 참고) — 여기만 처음부터 그려진 선으로 둔다.
+        spark = charts.sparkline_svg(series, width=84, height=22, animate=False) if len(series) >= 2 else ""
         n_comments = sum(1 for k in ctx["all_comments"] if k["content_id"] == cid)
         rank = latest_rank_row(ctx["all_ranks"], cid)
         out.append((c, pv, spark, n_comments, rank))
@@ -501,11 +503,16 @@ def _serp_row_html(ctx, r: dict, tab: str) -> str:
 
 
 def _serp_beyond_html(ctx, r: dict) -> str:
+    """실제 매치가 있는 줄만 `hit`을 붙인다 — 강조는 여기(제목까지 색이 있는 줄)에서만 켠다.
+
+    호출부(`serp_columns_html`)의 매치 0건 대체 문구("없음")는 `.beyond`만 쓰고 `hit`은
+    안 붙인다 — 매치가 없는데 노란 배경을 켜면 "우리 콘텐츠는 색으로 표시"가 거짓말이 된다.
+    """
     c = ctx["contents_by_id"].get(r["content_id"]) or {}
     channel = c.get("channel")
     ch_attr = f' data-ch="{ui.esc(channel)}"' if channel else ""
     return (
-        f'<div class="beyond"{ch_attr}><span class="label">10위 밖 우리 콘텐츠</span>{ui.rank_badge(r["rank"])}'
+        f'<div class="beyond hit"{ch_attr}><span class="label">10위 밖 우리 콘텐츠</span>{ui.rank_badge(r["rank"])}'
         f'<span>「{_esc(c.get("title") or r["content_id"])}」</span></div>'
     )
 

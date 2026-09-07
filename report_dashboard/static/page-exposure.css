@@ -18,6 +18,9 @@
   .srow.ours .src { color: var(--accent-ink); font-weight: 600; }
   .beyond { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0 4px; font-size: 12.5px; color: var(--ink-2); }
   .beyond .rank { min-width: 0; } .beyond .label { white-space: nowrap; }
+  /* 실제 매치가 있는 줄(.hit)만 .srow.ours와 같은 노란 워시로 강조한다 — "없음" 대체 줄은 그대로 무채색. */
+  .beyond.hit { background: var(--accent-wash); margin: 0 -10px; padding: 10px; border-radius: 6px; }
+  .beyond.hit span:last-child { color: var(--accent-ink); font-weight: 600; }
   /* 우측 레일 */
   .rail .sec-h { margin-top: 0; }
   .rail section + section { margin-top: 34px; }
