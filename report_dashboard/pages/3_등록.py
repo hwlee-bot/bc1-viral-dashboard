@@ -337,6 +337,78 @@ with body:
     else:
         st.markdown(ui.empty_state("아직 등록된 콘텐츠가 없다", "위 폼으로 콘텐츠를 등록하거나 시트에서 불러온다."), unsafe_allow_html=True)
 
+    # -- 콘텐츠 수정 · 삭제 ------------------------------------------
+    # 캠페인과 같은 이유(등록 실수 되돌릴 방법 없음, Slack 2026-09-07) + 같은
+    # 소프트 삭제 패턴 — 위 "캠페인 수정 · 삭제" 블록 주석 참고.
+    if campaign_labels:
+        st.markdown('<div class="or">콘텐츠 수정 · 삭제</div>', unsafe_allow_html=True)
+        content_edit_campaign_label = st.selectbox(
+            "캠페인", options=list(campaign_labels.keys()), key="content_edit_campaign",
+        )
+        content_edit_campaign_id = campaign_labels[content_edit_campaign_label]
+        campaign_contents = repo.contents(campaign_id=content_edit_campaign_id)
+
+        if not campaign_contents:
+            st.caption("이 캠페인에 등록된 콘텐츠가 없다.")
+        else:
+            content_option_labels = {
+                f"{_label(c)} · {ui.CHANNEL_LABEL.get(c['channel'], c['channel'])}": c["content_id"]
+                for c in campaign_contents
+            }
+            content_edit_pick = st.selectbox(
+                "수정·삭제할 콘텐츠", options=list(content_option_labels.keys()), key="content_edit_pick",
+            )
+            content_edit_id = content_option_labels[content_edit_pick]
+            content_editing = next(c for c in campaign_contents if c["content_id"] == content_edit_id)
+
+            # 캠페인·콘텐츠 선택이 바뀌면 폼 값을 그 콘텐츠의 저장된 값으로
+            # 리셋한다 — 위 "시트에서 불러오기" URL 입력창과 같은 이유.
+            if st.session_state.get("content_edit_shown") != content_edit_id:
+                st.session_state["content_edit_channel"] = content_editing["channel"]
+                st.session_state["content_edit_url"] = content_editing["url"]
+                st.session_state["content_edit_title"] = content_editing.get("title") or ""
+                st.session_state["content_edit_release"] = content_editing.get("release_at") or ""
+                st.session_state["content_edit_shown"] = content_edit_id
+
+            with st.form("content_edit_form"):
+                cf1, cf2, cf3, cf4 = st.columns(4)
+                content_edit_channel = cf1.selectbox("채널", options=CHANNELS, key="content_edit_channel")
+                content_edit_url = cf2.text_input("URL", key="content_edit_url")
+                content_edit_title = cf3.text_input("제목", key="content_edit_title")
+                content_edit_release = cf4.text_input("릴리즈 일정 (YYYY-MM-DD HH:MM)", key="content_edit_release")
+                submitted_content_edit = st.form_submit_button("콘텐츠 수정 저장", key="content_edit_submit")
+
+            if submitted_content_edit:
+                if not content_edit_url:
+                    st.warning("URL을 입력해야 저장된다.")
+                else:
+                    repo.save_content({
+                        **content_editing,
+                        "channel": content_edit_channel,
+                        "url": content_edit_url,
+                        "title": content_edit_title,
+                        "release_at": content_edit_release,
+                        "updated_at": _now(),
+                    })
+                    st.success(f"{content_edit_title or content_edit_url} 수정했다.")
+                    # rerun 안 씀(위 폼들과 같은 이유) — 아래에서 이 렌더 안 최신값을 쓰도록 새로 읽는다.
+                    campaign_contents = repo.contents(campaign_id=content_edit_campaign_id)
+                    content_editing = next(c for c in campaign_contents if c["content_id"] == content_edit_id)
+
+            metric_count = len(repo.content_metrics(content_id=content_edit_id))
+            comment_count = len(repo.comments(content_id=content_edit_id))
+            delete_note = (
+                f" — 수집 지표 {metric_count}건·댓글 {comment_count}건 데이터는 그대로 남지만, "
+                "리포트·이 목록에서는 더 이상 안 보인다."
+                if (metric_count or comment_count) else ""
+            )
+            content_delete_confirm = st.checkbox(
+                f"'{_label(content_editing)}' 삭제 확인{delete_note}", key="content_delete_confirm",
+            )
+            if st.button("콘텐츠 삭제", key="content_delete_submit", disabled=not content_delete_confirm):
+                repo.save_content({**content_editing, "deleted": True, "deleted_at": _now()})
+                st.success(f"{_label(content_editing)} 삭제했다.")
+
     # -- 키워드 ‖ 수동 조회수 --------------------------------------
 
     kw_col, manual_col = st.columns(2, gap="large")

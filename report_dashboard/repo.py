@@ -134,7 +134,9 @@ class ReportRepo:
     # -- 콘텐츠 ---------------------------------------------------
 
     def contents(self, campaign_id: str | None = None) -> list[dict]:
-        rows = self.store.latest("viral_contents", ("content_id",))
+        """소프트 삭제(`deleted=True`, 등록 페이지 "콘텐츠 삭제")된 콘텐츠는 뺀다 —
+        campaigns()와 같은 이유·같은 패턴(그 메서드 docstring 참고)."""
+        rows = [r for r in self.store.latest("viral_contents", ("content_id",)) if not r.get("deleted")]
         if campaign_id is not None:
             rows = [r for r in rows if r.get("campaign_id") == campaign_id]
         return rows
