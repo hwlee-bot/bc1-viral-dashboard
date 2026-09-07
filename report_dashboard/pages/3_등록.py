@@ -50,6 +50,17 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
+def _split_bulk_line(line: str) -> list[str]:
+    """일괄 등록 텍스트영역의 한 줄을 컬럼으로 쪼갠다.
+
+    탭이 있으면 탭으로만 쪼갠다 — 엑셀·구글시트에서 복사해 붙여넣은 줄은
+    셀 구분이 실제 탭 문자라, 제목 셀 안에 쉼표가 있어도 안 깨진다. 탭이
+    없으면(사람이 직접 타이핑) 쉼표로 쪼갠다 — 이 경우 제목에 쉼표가
+    있으면 컬럼이 밀릴 수 있는데, 그건 이후 콘텐츠 수정으로 바로잡으면 된다.
+    """
+    return line.split("\t") if "\t" in line else line.split(",")
+
+
 def _label(content: dict) -> str:
     return content.get("title") or content["url"]
 
@@ -290,6 +301,58 @@ with body:
                 })
                 st.success(f"{title or url} 저장했다.")
                 # rerun 안 씀 — Task 4와 같은 이유(성공 메시지가 사라지는 버그, 이미 수정됨)
+
+        # -- 여러 건 한 번에 등록 (Slack 요청 2026-09-07) ------------------
+        # 콘텐츠 폼을 10번 반복하기 번거롭다는 요청 — 구글시트 없이 대시보드
+        # 안에서 바로 여러 줄을 붙여넣게 한다. 파싱·검증(중복 URL·모르는 채널
+        # 걸러내기)은 "시트에서 불러오기"와 완전히 같은 규칙이어야 두 경로가
+        # 서로 다르게 동작하지 않으므로, content_sheet_sync.parse_sheet_content_rows를
+        # 그대로 재사용한다(줄마다 채널·URL·제목·릴리즈일 4컬럼인 건 같고,
+        # 입력 소스만 시트 grid 대신 텍스트영역 줄바꿈인 차이).
+        st.markdown('<div class="or">여러 건 한 번에 등록</div>', unsafe_allow_html=True)
+        with st.form("content_bulk_form"):
+            bulk_campaign_label = st.selectbox(
+                "캠페인", options=list(campaign_labels.keys()), key="content_bulk_campaign",
+            )
+            bulk_text = st.text_area(
+                "한 줄에 콘텐츠 하나 — `채널,URL,제목,릴리즈일` (제목·릴리즈일은 비워도 됨). "
+                "엑셀·구글시트에서 여러 행을 복사해 그대로 붙여넣어도 된다.",
+                key="content_bulk_text", height=160,
+                placeholder=(
+                    "blog,https://blog.naver.com/example,피부 열감엔 무슨 성분이 좋아요??,2026-09-10\n"
+                    "cafe,https://cafe.naver.com/example/123,,\n"
+                    "instagram,https://www.instagram.com/reel/abc/,,2026-09-11"
+                ),
+            )
+            submitted_bulk = st.form_submit_button("일괄 등록", key="content_bulk_submit")
+
+        if submitted_bulk:
+            bulk_campaign_id = campaign_labels[bulk_campaign_label]
+            lines = [ln for ln in bulk_text.splitlines() if ln.strip()]
+            if not lines:
+                st.warning("등록할 콘텐츠를 한 줄 이상 입력해야 한다.")
+            else:
+                grid = [["channel", "url", "title", "release_at"]] + [_split_bulk_line(ln) for ln in lines]
+                existing_urls = {c["url"] for c in repo.contents(campaign_id=bulk_campaign_id)}
+                candidates, skipped = content_sheet_sync.parse_sheet_content_rows(grid, existing_urls)
+                now = _now()
+                for c in candidates:
+                    repo.save_content({
+                        "content_id": _new_id("cnt"),
+                        "campaign_id": bulk_campaign_id,
+                        "channel": c["channel"],
+                        "url": c["url"],
+                        "title": c["title"],
+                        "release_at": c["release_at"],
+                        "created_at": now,
+                    })
+                if candidates:
+                    st.success(f"{len(candidates)}건 등록했다" + (f" · {len(skipped)}건 건너뜀" if skipped else "."))
+                else:
+                    st.warning("등록된 콘텐츠가 없다 — 형식을 확인해라.")
+                if skipped:
+                    st.caption(" / ".join(skipped))
+                # rerun 안 씀 — 위 단건 폼들과 같은 이유(성공 메시지 유지)
 
         st.markdown('<div class="or">시트에서 불러오기</div>', unsafe_allow_html=True)
         sheet_campaign_label = st.selectbox(
