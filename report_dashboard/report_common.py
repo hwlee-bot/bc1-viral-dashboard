@@ -518,7 +518,7 @@ def _serp_beyond_html(ctx, r: dict) -> str:
 
 
 def serp_columns_html(ctx, keyword: str) -> str:
-    """네이버 검색 API 최신순 상위 10 두 탭(블로그API·카페API)을 나란히 그린다.
+    """네이버 검색 API 최신순·관련도순 병합 상위 10 두 탭(블로그API·카페API)을 나란히 그린다.
 
     우리 콘텐츠(content_id 있는 행)만 .srow.ours로 강조하고, 목록에 안 잡힌
     10위 밖 매치는 탭마다 별도 노트로 붙인다.

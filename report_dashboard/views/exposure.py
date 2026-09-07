@@ -20,7 +20,7 @@ _NAVER_CHANNELS = [c for c in CHANNELS if c != "instagram"]
 _BASES = (("count", "상위노출 콘텐츠 수"), ("views", "매치 조회수 합"))
 # 분모는 변형·깊이마다 다르므로(40슬롯 / 220점 / …) sub에 넣지 않고 스트립 캡션이 담당한다.
 # 깊이 숫자만 `[data-depth-label]`로 남겨 세그먼트가 바꾼다(§12.2).
-_SHARE_SUB = ('키워드×탭 네이버 검색 API 최신순 상위 <span data-depth-label>10</span> 슬롯 중 '
+_SHARE_SUB = ('키워드×탭 네이버 검색 API 최신순·관련도순 상위 <span data-depth-label>10</span> 슬롯 중 '
               "제목에 브랜드가 매칭된 비율")
 _DEPTH_SEG = '<div class="seg" data-seg="depth">' + "".join(
     f'<span class="on" data-depth="{d}">상위 {d}</span>' if i == 0 else f'<span data-depth="{d}">상위 {d}</span>'
@@ -28,7 +28,7 @@ _DEPTH_SEG = '<div class="seg" data-seg="depth">' + "".join(
 ) + "</div>"
 _SHARE_SEG = ('<div class="seg" data-seg="variant"><span class="on" data-variant="slot">슬롯 수</span>'
               '<span data-variant="weighted">위치 가중</span></div>')
-_SERP_SUB = "네이버 검색 API 최신순 상위 10 · 우리 콘텐츠는 색으로 표시"
+_SERP_SUB = "네이버 검색 API 최신순·관련도순 상위 10 · 우리 콘텐츠는 색으로 표시"
 # 레일 섹션(`section.reveal`) 안에 들어가므로 평문 `.sec-h`다(R12).
 _EXPOSURE_HEADER = views.sec_h("채널별 네이버 노출", right_html='<span class="label">100위 내</span>')
 
