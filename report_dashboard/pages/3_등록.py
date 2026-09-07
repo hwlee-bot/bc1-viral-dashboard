@@ -113,7 +113,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
+CHANNELS = ["youtube", "blog", "cafe", "community", "instagram", "twitter"]
 
 campaigns = repo.campaigns()
 all_contents = repo.contents()
@@ -131,7 +131,7 @@ with toc:
         f'<a href="#sec-content">콘텐츠 <small>{len(all_contents)}</small></a>'
         f'<a href="#sec-keyword">키워드 <small>{len(kw_all)}</small></a>'
         '<a href="#sec-manual">수동 조회수</a>'
-        '<a href="#sec-status">수집 상태 <small>3</small></a>'
+        '<a href="#sec-status">수집 상태 <small>4</small></a>'
         f'<a href="#sec-users">광고주 계정 <small>{active_clients_count}</small></a></nav>',
         unsafe_allow_html=True,
     )
@@ -406,6 +406,7 @@ with body:
             # 리셋한다 — 위 "시트에서 불러오기" URL 입력창과 같은 이유.
             if st.session_state.get("content_edit_shown") != content_edit_id:
                 _rel_date, _rel_time = _parse_release_at(content_editing.get("release_at") or "")
+                st.session_state["content_edit_move_campaign"] = content_edit_campaign_label
                 st.session_state["content_edit_channel"] = content_editing["channel"]
                 st.session_state["content_edit_url"] = content_editing["url"]
                 st.session_state["content_edit_title"] = content_editing.get("title") or ""
@@ -414,7 +415,13 @@ with body:
                 st.session_state["content_edit_shown"] = content_edit_id
 
             with st.form("content_edit_form"):
-                cf1, cf2, cf3 = st.columns(3)
+                cf0, cf1, cf2, cf3 = st.columns(4)
+                # 캠페인 이동(Slack 문의 2026-09-07) — 등록 실수로 다른 캠페인에
+                # 들어간 콘텐츠를 새로 만들지 않고 같은 content_id로 옮긴다. 기본값은
+                # 현재 캠페인이라 안 건드리면 그대로 유지된다.
+                content_edit_move_campaign_label = cf0.selectbox(
+                    "캠페인", options=list(campaign_labels.keys()), key="content_edit_move_campaign",
+                )
                 content_edit_channel = cf1.selectbox("채널", options=CHANNELS, key="content_edit_channel")
                 content_edit_url = cf2.text_input("URL", key="content_edit_url")
                 content_edit_title = cf3.text_input("제목", key="content_edit_title")
@@ -435,18 +442,33 @@ with body:
                 if not content_edit_url:
                     st.warning("URL을 입력해야 저장된다.")
                 else:
-                    repo.save_content({
+                    target_campaign_id = campaign_labels[content_edit_move_campaign_label]
+                    moved = target_campaign_id != content_editing["campaign_id"]
+                    updated_content = {
                         **content_editing,
+                        "campaign_id": target_campaign_id,
                         "channel": content_edit_channel,
                         "url": content_edit_url,
                         "title": content_edit_title,
                         "release_at": _format_release_at(content_edit_release_date, content_edit_release_time),
                         "updated_at": _now(),
-                    })
-                    st.success(f"{content_edit_title or content_edit_url} 수정했다.")
+                    }
+                    repo.save_content(updated_content)
+                    if moved:
+                        st.success(
+                            f"{content_edit_title or content_edit_url}을(를) "
+                            f"'{content_edit_move_campaign_label}'(으)로 이동했다."
+                        )
+                    else:
+                        st.success(f"{content_edit_title or content_edit_url} 수정했다.")
                     # rerun 안 씀(위 폼들과 같은 이유) — 아래에서 이 렌더 안 최신값을 쓰도록 새로 읽는다.
+                    # 캠페인을 이동했으면 원래 선택 캠페인(content_edit_campaign_id) 목록에는
+                    # 더 이상 없다 — next()가 못 찾아 죽지 않도록 방금 저장한 값으로 폴백한다.
                     campaign_contents = repo.contents(campaign_id=content_edit_campaign_id)
-                    content_editing = next(c for c in campaign_contents if c["content_id"] == content_edit_id)
+                    content_editing = next(
+                        (c for c in campaign_contents if c["content_id"] == content_edit_id),
+                        updated_content,
+                    )
 
             metric_count = len(repo.content_metrics(content_id=content_edit_id))
             comment_count = len(repo.comments(content_id=content_edit_id))
@@ -632,6 +654,7 @@ with body:
         ("keyword_ranks", "네이버 순위 · SERP", "매일 06:00"),
         ("comments", "댓글 수집", "매일 06:30"),
         ("content_metrics", "인스타 좋아요·조회수", "매일 06:30"),
+        ("twitter_metrics", "트위터 지표", "매일 07:00"),
     ]
     status_rows_html = []
     for run_type, run_title, sched in status_labels:

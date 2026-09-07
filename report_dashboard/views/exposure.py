@@ -15,8 +15,10 @@ from report_dashboard.report_common import (
 )
 from report_dashboard.reporting import build_export_markdown, keyword_rank_summary
 
-# 네이버 순위를 추적하는 채널만 칩으로 낸다 — 인스타는 SERP 대상이 아니다(§4.3).
-_NAVER_CHANNELS = [c for c in CHANNELS if c != "instagram"]
+# 네이버 순위를 추적하는 채널만 칩으로 낸다 — 인스타·트위터는 SERP 대상이
+# 아니다(§4.3, 트위터는 2026-09-07 신규 — 네이버가 색인하는 채널이 아니라
+# 애초에 collect_naver_ranks.py 대상에도 안 들어간다).
+_NAVER_CHANNELS = [c for c in CHANNELS if c not in ("instagram", "twitter")]
 _BASES = (("count", "상위노출 콘텐츠 수"), ("views", "매치 조회수 합"))
 # 분모는 변형·깊이마다 다르므로(40슬롯 / 220점 / …) sub에 넣지 않고 스트립 캡션이 담당한다.
 # 깊이 숫자만 `[data-depth-label]`로 남겨 세그먼트가 바꾼다(§12.2).

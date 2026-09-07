@@ -42,7 +42,7 @@ from report_dashboard.reporting import (
     participation_rate, rank_history, week_label, TOP_EXPOSURE_RANK,
 )
 
-CHANNELS = ["youtube", "blog", "cafe", "community", "instagram"]
+CHANNELS = ["youtube", "blog", "cafe", "community", "instagram", "twitter"]
 
 
 def _esc(value) -> str:

@@ -86,7 +86,7 @@
     return out;
   }
   /* Python `ui.CHANNEL_LABEL`·`ui.empty_state(...)`와 문자 단위로 같아야 한다(파이썬 패리티 테스트가 고정). */
-  const CH_LABEL = { instagram: "인스타그램", blog: "블로그", cafe: "카페", community: "커뮤니티", youtube: "유튜브" };
+  const CH_LABEL = { instagram: "인스타그램", blog: "블로그", cafe: "카페", community: "커뮤니티", youtube: "유튜브", twitter: "트위터" };
   /* 채널별 모드는 채널 키를 `innerHTML`(`var(--ch-KEY)` · 범례 라벨)에 넣는다 — payload는
      서버가 만들지만, 아는 채널만 통과시켜 데이터에서 온 문자열이 마크업이 되는 길을 끊는다. */
   function knownChannels(names) { return names.filter((ch) => Object.prototype.hasOwnProperty.call(CH_LABEL, ch)); }

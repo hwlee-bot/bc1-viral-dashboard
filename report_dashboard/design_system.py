@@ -45,6 +45,7 @@ _LIGHT = """
   --ch-youtube: #eb6834;
   --ch-cafe: #1baf7a;
   --ch-community: #4a3aa7;
+  --ch-twitter: #0f1419;
   --good: #0a7d0a;
   --bad: #c43535;
   --grid: #e3e2db;
@@ -62,7 +63,7 @@ _DARK = """
   --hair: #2a2a27; --border: rgba(255,255,255,0.09); --border-2: rgba(255,255,255,0.15);
   --accent: #f5c542; --accent-ink: #f5c542; --accent-wash: rgba(245,197,66,0.14); --accent-on: #1a1400;
   --invert-bg: #f3f2ec; --invert-ink: #131311; --invert-muted: rgba(19,19,17,0.55);
-  --ch-instagram: #d55181; --ch-blog: #3987e5; --ch-youtube: #d95926; --ch-cafe: #199e70; --ch-community: #9085e9;
+  --ch-instagram: #d55181; --ch-blog: #3987e5; --ch-youtube: #d95926; --ch-cafe: #199e70; --ch-community: #9085e9; --ch-twitter: #e7e9ea;
   --good: #35b535; --bad: #e66767; --grid: #2a2a27;
   --shadow: 0 1px 0 rgba(0,0,0,0.3), 0 16px 40px -24px rgba(0,0,0,0.7);
   --wash: #f3f2ec; --wash-op: 0.06;
