@@ -120,7 +120,13 @@ class ReportRepo:
     # -- 캠페인 ---------------------------------------------------
 
     def campaigns(self) -> list[dict]:
-        return self.store.latest("viral_campaigns", ("campaign_id",))
+        """소프트 삭제(`deleted=True`, 등록 페이지 "캠페인 삭제")된 캠페인은 뺀다.
+
+        append-only 저장소라 실제로 지우지 않는다 — 콘텐츠·키워드 등 참조 데이터는
+        그대로 남기고, 여기 한 곳에서만 걸러서 헤더·리포트·등록 페이지 목록이
+        전부 동시에 "안 보임"에 합의하게 한다(따로 걸렀으면 한 곳만 고치고
+        잊었을 때 삭제한 캠페인이 리포트 셀렉트에 계속 뜬다)."""
+        return [c for c in self.store.latest("viral_campaigns", ("campaign_id",)) if not c.get("deleted")]
 
     def save_campaign(self, row: dict) -> None:
         self.store.save("viral_campaigns", row)

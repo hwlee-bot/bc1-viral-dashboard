@@ -156,6 +156,69 @@ with body:
 
     campaign_labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
 
+    # -- 캠페인 수정 · 삭제 ------------------------------------------
+    # 브랜드/캠페인명을 반대로 입력하는 등 등록 실수를 되돌릴 방법이 없었다
+    # (Slack 문의 2026-09-07) — append-only 저장소라 "수정"은 같은 campaign_id로
+    # 새 리비전을 저장(latest가 자동으로 최신을 고름), "삭제"는 실제로 지우지
+    # 않고 deleted=True 리비전을 추가하는 소프트 삭제다(viral_users의 active
+    # 플래그와 같은 패턴) — 콘텐츠·키워드 등 참조 데이터는 그대로 남고
+    # repo.campaigns()가 더 이상 돌려주지 않을 뿐이다.
+    if campaigns:
+        st.markdown('<div class="or">캠페인 수정 · 삭제</div>', unsafe_allow_html=True)
+        edit_pick = st.selectbox("수정·삭제할 캠페인", options=list(campaign_labels.keys()), key="campaign_edit_pick")
+        edit_id = campaign_labels[edit_pick]
+        editing = next(c for c in campaigns if c["campaign_id"] == edit_id)
+
+        # 캠페인 선택이 바뀌면 폼 값을 그 캠페인의 저장된 값으로 리셋한다 —
+        # "시트에서 불러오기" URL 입력창과 같은 이유(위 주석 참고): 안 그러면
+        # A를 고친 값 그대로 B를 골라도 입력창에 A값이 남아 B를 덮어쓴다.
+        if st.session_state.get("campaign_edit_shown") != edit_id:
+            st.session_state["campaign_edit_brand"] = editing["brand"]
+            st.session_state["campaign_edit_name"] = editing["name"]
+            st.session_state["campaign_edit_start"] = editing.get("start_date") or ""
+            st.session_state["campaign_edit_end"] = editing.get("end_date") or ""
+            st.session_state["campaign_edit_shown"] = edit_id
+
+        with st.form("campaign_edit_form"):
+            ef1, ef2, ef3, ef4 = st.columns(4)
+            edit_brand = ef1.text_input("브랜드", key="campaign_edit_brand")
+            edit_name = ef2.text_input("캠페인명", key="campaign_edit_name")
+            edit_start = ef3.text_input("시작일 (YYYY-MM-DD)", key="campaign_edit_start")
+            edit_end = ef4.text_input("종료일 (YYYY-MM-DD)", key="campaign_edit_end")
+            submitted_edit = st.form_submit_button("캠페인 수정 저장", key="campaign_edit_submit")
+
+        if submitted_edit:
+            if not edit_brand or not edit_name:
+                st.warning("브랜드와 캠페인명을 입력해야 저장된다.")
+            else:
+                repo.save_campaign({
+                    **editing,
+                    "brand": edit_brand,
+                    "name": edit_name,
+                    "start_date": edit_start,
+                    "end_date": edit_end,
+                    "updated_at": _now(),
+                })
+                st.success(f"{edit_brand} · {edit_name}(으)로 수정했다.")
+                # rerun 안 씀(위 폼들과 같은 이유) — 아래 콘텐츠·키워드 섹션
+                # 드롭다운이 이 렌더 안에서 바로 새 이름을 쓰도록 직접 새로 읽는다.
+                campaigns = repo.campaigns()
+                campaign_labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
+
+        content_count = sum(1 for x in all_contents if x["campaign_id"] == edit_id)
+        keyword_count = sum(1 for k in kw_all if k["campaign_id"] == edit_id)
+        delete_note = (
+            f" — 콘텐츠 {content_count}건·키워드 {keyword_count}건 데이터는 그대로 남지만, "
+            "리포트·이 목록에서는 더 이상 안 보인다."
+            if (content_count or keyword_count) else ""
+        )
+        delete_confirm = st.checkbox(f"'{editing['brand']} · {editing['name']}' 삭제 확인{delete_note}", key="campaign_delete_confirm")
+        if st.button("캠페인 삭제", key="campaign_delete_submit", disabled=not delete_confirm):
+            repo.save_campaign({**editing, "deleted": True, "deleted_at": _now()})
+            st.success(f"{editing['brand']} · {editing['name']} 삭제했다.")
+            campaigns = repo.campaigns()
+            campaign_labels = {f"{c['brand']} · {c['name']}": c["campaign_id"] for c in campaigns}
+
     # -- 콘텐츠 ---------------------------------------------------
 
     _blk("sec-content", "콘텐츠", "채널별 콘텐츠 URL 등록. 자동 수집기가 이 목록을 기준으로 지표를 채운다.")
