@@ -5,7 +5,7 @@
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time as dt_time
 
 # Streamlit Cloud는 실행할 스크립트가 있는 폴더만 sys.path에 넣는다(공식 소스
 # streamlit/web/bootstrap.py::_fix_sys_path 확인함) — 저장소 루트는 안 들어간다.
@@ -52,6 +52,38 @@ def _new_id(prefix: str) -> str:
 
 def _label(content: dict) -> str:
     return content.get("title") or content["url"]
+
+
+def _parse_release_at(value: str) -> tuple[date | None, dt_time | None]:
+    """저장된 "YYYY-MM-DD" 또는 "YYYY-MM-DD HH:MM" 문자열을 캘린더·시각 위젯이
+    쓸 (date, time) 쌍으로 되돌린다. 형식이 안 맞거나 빈 값이면 (None, None) —
+    캘린더 위젯을 빈 상태로 둔다(잘못 지어낸 값으로 채우지 않는다)."""
+    text = (value or "").strip()
+    if not text:
+        return None, None
+    date_part, _, time_part = text.partition(" ")
+    try:
+        d = datetime.strptime(date_part, "%Y-%m-%d").date()
+    except ValueError:
+        return None, None
+    t = None
+    if time_part:
+        try:
+            t = datetime.strptime(time_part.strip(), "%H:%M").time()
+        except ValueError:
+            t = None
+    return d, t
+
+
+def _format_release_at(release_date: date | None, release_time: dt_time | None) -> str:
+    """캘린더·시각 위젯 값을 저장용 문자열로 합친다. 날짜가 없으면 빈 문자열 —
+    시각만 있고 날짜가 없는 경우는 의미가 없어서 시각도 같이 버린다."""
+    if release_date is None:
+        return ""
+    text = release_date.strftime("%Y-%m-%d")
+    if release_time is not None:
+        text += " " + release_time.strftime("%H:%M")
+    return text
 
 
 repo = ReportRepo()
@@ -231,7 +263,16 @@ with body:
             channel = st.selectbox("채널", options=CHANNELS, key="content_channel")
             url = st.text_input("URL", key="content_url")
             title = st.text_input("제목", key="content_title")
-            release_at = st.text_input("릴리즈 일정 (YYYY-MM-DD HH:MM)", key="content_release")
+            # 캘린더 팝업(날짜) + 드롭다운형 시각 선택 — 자유 텍스트 "YYYY-MM-DD HH:MM"
+            # 입력에서 바꿈(팀장님 요청 2026-09-07, 시연님 Slack 제안). 시각은 선택
+            # 사항이라 비워두면 날짜만 저장된다(_format_release_at).
+            rel_col1, rel_col2 = st.columns(2)
+            release_date = rel_col1.date_input(
+                "릴리즈 날짜", value=None, key="content_release_date", format="YYYY-MM-DD",
+            )
+            release_time = rel_col2.time_input(
+                "릴리즈 시각 (선택)", value=None, key="content_release_time",
+            )
             submitted_content = st.form_submit_button("콘텐츠 저장", key="content_submit")
 
         if submitted_content:
@@ -244,7 +285,7 @@ with body:
                     "channel": channel,
                     "url": url,
                     "title": title,
-                    "release_at": release_at,
+                    "release_at": _format_release_at(release_date, release_time),
                     "created_at": _now(),
                 })
                 st.success(f"{title or url} 저장했다.")
@@ -364,18 +405,30 @@ with body:
             # 캠페인·콘텐츠 선택이 바뀌면 폼 값을 그 콘텐츠의 저장된 값으로
             # 리셋한다 — 위 "시트에서 불러오기" URL 입력창과 같은 이유.
             if st.session_state.get("content_edit_shown") != content_edit_id:
+                _rel_date, _rel_time = _parse_release_at(content_editing.get("release_at") or "")
                 st.session_state["content_edit_channel"] = content_editing["channel"]
                 st.session_state["content_edit_url"] = content_editing["url"]
                 st.session_state["content_edit_title"] = content_editing.get("title") or ""
-                st.session_state["content_edit_release"] = content_editing.get("release_at") or ""
+                st.session_state["content_edit_release_date"] = _rel_date
+                st.session_state["content_edit_release_time"] = _rel_time
                 st.session_state["content_edit_shown"] = content_edit_id
 
             with st.form("content_edit_form"):
-                cf1, cf2, cf3, cf4 = st.columns(4)
+                cf1, cf2, cf3 = st.columns(3)
                 content_edit_channel = cf1.selectbox("채널", options=CHANNELS, key="content_edit_channel")
                 content_edit_url = cf2.text_input("URL", key="content_edit_url")
                 content_edit_title = cf3.text_input("제목", key="content_edit_title")
-                content_edit_release = cf4.text_input("릴리즈 일정 (YYYY-MM-DD HH:MM)", key="content_edit_release")
+                # 캘린더 팝업(날짜) + 드롭다운형 시각 선택 — 위 콘텐츠 등록 폼과 같은 이유.
+                # value=를 안 주는 건 의도적이다 — 위에서 이미 session_state를 그
+                # 콘텐츠의 값으로 맞춰뒀으므로, 여기서 value=를 또 주면 어느 쪽을
+                # 따를지 애매해진다(이 페이지의 다른 필드들도 전부 이 방식).
+                rel_col1, rel_col2 = st.columns(2)
+                content_edit_release_date = rel_col1.date_input(
+                    "릴리즈 날짜", key="content_edit_release_date", format="YYYY-MM-DD",
+                )
+                content_edit_release_time = rel_col2.time_input(
+                    "릴리즈 시각 (선택)", key="content_edit_release_time",
+                )
                 submitted_content_edit = st.form_submit_button("콘텐츠 수정 저장", key="content_edit_submit")
 
             if submitted_content_edit:
@@ -387,7 +440,7 @@ with body:
                         "channel": content_edit_channel,
                         "url": content_edit_url,
                         "title": content_edit_title,
-                        "release_at": content_edit_release,
+                        "release_at": _format_release_at(content_edit_release_date, content_edit_release_time),
                         "updated_at": _now(),
                     })
                     st.success(f"{content_edit_title or content_edit_url} 수정했다.")
