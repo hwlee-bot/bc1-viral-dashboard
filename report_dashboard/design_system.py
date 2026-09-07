@@ -384,9 +384,10 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 .hdr-brand b { font-size: 14px; font-weight: 700; display: block; line-height: 1.1; } .hdr-brand span { font-size: 11px; color: var(--muted); display: block; }
 .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--s3); border: 1px solid var(--border); display: inline-grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--ink-2); }
 /* 실측: 계정 팝오버 트리거("HW" 이니셜)가 좁아서 두 줄로 줄바꿈됐다 — 최소 폭 확보.
-   실제 트리거 버튼 testid는 stPopoverButton(래퍼는 stPopover) — 둘 다 잡아둔다. */
-[data-testid="stPopover"] button, [data-testid="stPopoverButton"] { min-width: 38px; height: 34px; border-radius: 50% !important; padding: 0 8px !important; white-space: nowrap; }
-/* v4.1 헤더 재스킨(스펙 §11.1) — 목업 base.css .hdr 규격: 60px 한 줄, 탭 묶음 s3 필, 셀렉트 34px, 아바타 34px 원 */
+   실제 트리거 버튼 testid는 stPopoverButton(래퍼는 stPopover) — 둘 다 잡아둔다.
+   모양은 원이 아니라 다른 칩·버튼과 같은 둥근 사각형(팀장님 요청 2026-09-07 — 원엔 이니셜이 넘쳤다). */
+[data-testid="stPopover"] button, [data-testid="stPopoverButton"] { min-width: 38px; height: 34px; border-radius: var(--r-btn) !important; padding: 0 8px !important; white-space: nowrap; }
+/* v4.1 헤더 재스킨(스펙 §11.1) — 목업 base.css .hdr 규격: 60px 한 줄, 탭 묶음 s3 필, 셀렉트 34px, 아바타 34px 둥근 사각형 */
 div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) { height: 60px !important; min-height: 60px; padding: 0 28px !important; display: flex; flex-direction: column; justify-content: center; }
 div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) > [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] { align-items: center; }
 /* 가운데 탭 묶음: 셀렉트/팝오버가 없는 중첩 가로 블록 = 탭 3개 */
@@ -410,8 +411,9 @@ div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .
 div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stSelectbox"])) [data-testid="stMarkdownContainer"] p { line-height: 32px !important; margin: 0 !important; }
 /* 스트림릿 마크다운 p 여백 제거(헤더 안) */
 div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stMarkdownContainer"] p { margin: 0; }
-/* 아바타 팝오버: 34px 원, 캐럿 제거 */
-div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stPopoverButton"] { width: 34px !important; min-width: 34px !important; height: 34px !important; min-height: 34px !important; padding: 0 !important; background: var(--s3) !important; border: 1px solid var(--border) !important; color: var(--ink-2) !important; font-size: 11px !important; font-weight: 700 !important; }
+/* 아바타 팝오버: 34px 높이의 둥근 사각형(다른 칩·셀렉트와 같은 --r-btn), 캐럿 제거.
+   너비는 고정 34px이 아니라 auto — 이니셜 2글자가 원 안에서 넘치던 것을 고정폭 자체를 없애 해결한다. */
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stPopoverButton"] { width: auto !important; min-width: 34px !important; height: 34px !important; min-height: 34px !important; padding: 0 12px !important; border-radius: var(--r-btn) !important; background: var(--s3) !important; border: 1px solid var(--border) !important; color: var(--ink-2) !important; font-size: 11px !important; font-weight: 700 !important; }
 div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stPopoverButton"] svg { display: none; }
 div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .hdr-marker) [data-testid="stPopoverButton"] > div { display: flex; justify-content: center; }
 /* 헤더와 본문 iframe 사이의 스트림릿 블록 간격(1rem) 제거 — 목업은 헤더 60px 바로 아래 .wrap 패딩 40px */

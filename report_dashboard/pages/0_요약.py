@@ -8,8 +8,8 @@ if _repo_root not in sys.path:
 
 import streamlit as st
 
-from report_dashboard import frame, ui
-from report_dashboard.auth import require_role
+from report_dashboard import frame, gh_actions, ui
+from report_dashboard.auth import ROLE_TEAM, require_role
 from report_dashboard.design_system import inject_design_system
 from report_dashboard.header import render_header
 from report_dashboard.report_common import CHANNELS, load_campaign_context
@@ -24,6 +24,28 @@ campaign_id = render_header(role, email, campaigns, current="요약")
 if campaign_id is None:
     st.markdown(ui.empty_state("등록된 캠페인이 없습니다", "담당자가 등록·관리자 페이지에서 캠페인을 추가하면 여기에 표시됩니다."), unsafe_allow_html=True); st.stop()
 campaign = next(c for c in campaigns if c["campaign_id"] == campaign_id)
+
+# 수동 재수집(팀장님 요청 2026-09-07): 새벽 자동 수집이 가끔 안 돌아서, 터미널 없이
+# 여기서 바로 재요청할 수 있게 한다. 팀 전용 — 광고주 role엔 안 보인다.
+if role == ROLE_TEAM:
+    _, btn_col = st.columns([5, 1])
+    with btn_col:
+        collect_clicked = st.button(
+            "지금 수집", key="trigger_collect", use_container_width=True,
+            help="네이버 순위·댓글 자동 수집을 GitHub Actions에 바로 요청합니다. "
+                 "실제 수집은 몇 분 뒤 끝나므로, 이후 새로고침해서 확인하세요.",
+        )
+    if collect_clicked:
+        try:
+            results = gh_actions.trigger_collection()
+        except gh_actions.MissingGithubTokenError as exc:
+            st.error(str(exc))
+        else:
+            failed = [name for name, ok in results.items() if not ok]
+            if failed:
+                st.error(f"{', '.join(failed)} 수집 요청이 실패했다 — GitHub 토큰 권한을 확인해달라.")
+            else:
+                st.success("네이버 순위·댓글 수집을 요청했다 — 몇 분 뒤 새로고침하면 반영된다.")
 
 # 채널 필터는 항상 전체로 읽는다 — 필터는 iframe 안 JS가 클라이언트에서 처리한다(§2).
 ctx = load_campaign_context(repo, campaign_id, CHANNELS)
