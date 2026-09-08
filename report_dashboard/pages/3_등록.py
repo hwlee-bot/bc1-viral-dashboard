@@ -142,7 +142,7 @@ with toc:
         f'<a href="#sec-content">콘텐츠 <small>{len(all_contents)}</small></a>'
         f'<a href="#sec-keyword">키워드 <small>{len(kw_all)}</small></a>'
         '<a href="#sec-manual">수동 조회수</a>'
-        '<a href="#sec-status">수집 상태 <small>4</small></a>'
+        '<a href="#sec-status">수집 상태 <small>5</small></a>'
         f'<a href="#sec-users">광고주 계정 <small>{active_clients_count}</small></a></nav>',
         unsafe_allow_html=True,
     )
@@ -592,6 +592,27 @@ with body:
             else:
                 st.caption("이 캠페인에 등록된 키워드가 없다.")
 
+            # 노출 지면 캡쳐 링크 — 키워드×탭(블로그·카페)×종류(풀샷·상위15)마다
+            # 최신 캡쳐 1건만(2026-09-09 신규, 09-09 캡쳐 2종+탭 분리로 확장).
+            # collection_run 성공 여부와 별개로 실제로 뭐가 찍혔는지 바로 열어볼 수 있게.
+            _CAPTURE_TAB_LABEL = {"blog": "블로그", "cafe": "카페"}
+            _CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "상위15"}
+            captures_for_campaign = repo.exposure_captures(campaign_id=keyword_campaign_id)
+            if captures_for_campaign:
+                latest_capture_by_key: dict[tuple[str, str, str], dict] = {}
+                for c in captures_for_campaign:
+                    key = (c["keyword"], c.get("search_tab", ""), c.get("capture_type", ""))
+                    prev = latest_capture_by_key.get(key)
+                    if prev is None or c["captured_at"] > prev["captured_at"]:
+                        latest_capture_by_key[key] = c
+                capture_links = "".join(
+                    f'<a class="chip" href="{ui.esc(c["drive_url"])}" target="_blank">'
+                    f'{ui.esc(kw)} {ui.esc(_CAPTURE_TAB_LABEL.get(tab, tab))} '
+                    f'{ui.esc(_CAPTURE_TYPE_LABEL.get(ctype, ctype))} 지면 보기 ({ui.esc(c["captured_at"][:10])})</a>'
+                    for (kw, tab, ctype), c in sorted(latest_capture_by_key.items())
+                )
+                st.markdown('<div class="kw-chips">' + capture_links + '</div>', unsafe_allow_html=True)
+
             st.markdown('<div class="or">브랜드 사전</div>', unsafe_allow_html=True)
             # 캠페인 셀렉트는 st.form 밖에 둔다 — form 안에 있으면 "캠페인 전환 +
             # 텍스트 입력 + 제출"이 한 rerun에 몰려서, 아래 세션시드 로직이 방금
@@ -718,6 +739,7 @@ with body:
         ("comments", "댓글 수집", "매일 06:30"),
         ("content_metrics", "인스타 좋아요·조회수", "매일 06:30"),
         ("twitter_metrics", "트위터 지표", "매일 07:00"),
+        ("exposure_captures", "노출 지면 캡쳐", "매일 07:30"),
     ]
     status_rows_html = []
     for run_type, run_title, sched in status_labels:

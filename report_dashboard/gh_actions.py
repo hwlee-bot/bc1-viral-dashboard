@@ -21,6 +21,7 @@ REPO = "hwlee-bot/bc1-viral-report"
 WORKFLOWS = {
     "네이버 순위": "naver-rank-collect.yml",
     "댓글": "comment-collect.yml",
+    "노출 지면 캡쳐": "exposure-capture.yml",
 }
 
 
@@ -42,7 +43,7 @@ def _token() -> str:
 
 
 def trigger_collection(*, ref: str = "main") -> dict[str, bool]:
-    """네이버 순위·댓글 두 워크플로에 `workflow_dispatch`를 요청한다.
+    """WORKFLOWS에 등록된 모든 워크플로에 `workflow_dispatch`를 요청한다.
 
     반환값은 `{워크플로 이름: 요청 접수 성공 여부}` — GitHub이 204를 주면 "실행 큐에
     들어갔다"는 뜻이지 "수집이 끝났다"는 뜻이 아니다(Actions 특성상 몇 분 걸린다).

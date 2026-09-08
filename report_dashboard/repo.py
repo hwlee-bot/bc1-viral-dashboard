@@ -236,6 +236,19 @@ class ReportRepo:
             return None
         return max(enumerate(runs), key=lambda pair: (pair[1].get("started_at", ""), pair[0]))[1]
 
+    # -- 노출 지면 캡쳐 (append-only, 2026-09-09 신규) -----------------------
+
+    def exposure_captures(self, campaign_id: str | None = None, keyword: str | None = None) -> list[dict]:
+        if keyword is not None:
+            return self.store.find("viral_exposure_captures", keyword=keyword)
+        rows = self.store.load("viral_exposure_captures")
+        if campaign_id is not None:
+            rows = [r for r in rows if r.get("campaign_id") == campaign_id]
+        return rows
+
+    def save_exposure_capture(self, row: dict) -> None:
+        self.store.save("viral_exposure_captures", row)
+
     # -- 점유율 브랜드 사전 (2026-09-03 신규, latest by (campaign_id, brand)) --------
 
     def brand_terms(self, campaign_id: str) -> list[dict]:
