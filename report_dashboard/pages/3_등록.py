@@ -597,8 +597,8 @@ with body:
             # 노출 지면 캡쳐 링크 — 키워드×탭(블로그·카페)×종류(풀샷·상위15)마다
             # 최신 캡쳐 1건만(2026-09-09 신규, 09-09 캡쳐 2종+탭 분리로 확장).
             # collection_run 성공 여부와 별개로 실제로 뭐가 찍혔는지 바로 열어볼 수 있게.
-            _CAPTURE_TAB_LABEL = {"blog": "블로그", "cafe": "카페"}
-            _CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "상위15"}
+            _CAPTURE_TAB_LABEL = {"home": "홈", "blog": "블로그", "cafe": "카페"}
+            _CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "상위15"}  # top15는 과거 캡쳐 라벨용(2026-09-10 제거됨)
             captures_for_campaign = repo.exposure_captures(campaign_id=keyword_campaign_id)
             if captures_for_campaign:
                 latest_capture_by_key: dict[tuple[str, str, str], dict] = {}

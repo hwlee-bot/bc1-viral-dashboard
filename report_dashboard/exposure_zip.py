@@ -12,8 +12,8 @@ from __future__ import annotations
 import io
 import zipfile
 
-CAPTURE_TAB_LABEL = {"blog": "블로그", "cafe": "카페"}
-CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "상위15"}
+CAPTURE_TAB_LABEL = {"home": "홈", "blog": "블로그", "cafe": "카페"}
+CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "상위15"}  # top15는 과거 캡쳐 라벨용(2026-09-10 제거됨)
 
 
 def capture_dates(captures: list[dict]) -> list[str]:
