@@ -9,9 +9,18 @@
 계정이 멤버로 초대된 공유 드라이브(또는 그 안의 폴더) ID여야 하고, 모든 API
 호출에 `supportsAllDrives=True`를 넘긴다 — 이게 없으면 공유 드라이브 폴더에
 대한 요청도 조용히 404가 난다.
+
+**스코프는 `drive.file`이 아니라 전체 `drive`다** — 실측 확인됨(2026-09-08,
+첫 실제 업로드 56건 전부 "File not found" 404). `drive.file`은 "이 앱이
+직접 만들었거나 연 파일"에만 파일 단위로 접근을 허용하는 좁은 스코프라,
+서비스 계정을 공유 드라이브에 멤버로 초대해도(진짜 Drive 권한은 있어도)
+그 스코프 기준으로는 그 폴더가 "안 보인다" — Drive API가 403이 아니라
+404로 응답해서 원인이 스코프인지 폴더 ID 오류인지 헷갈리게 만든다. 서버
+쪽에서 공유 드라이브 전체를 다루는 이런 백엔드 자동화엔 전체 `drive`
+스코프가 맞다(이 앱이 실제로 만들지 않은 기존 폴더에 파일을 넣어야 하므로).
 """
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 def build_drive_service(credentials_info: dict):
@@ -25,7 +34,11 @@ def build_drive_service(credentials_info: dict):
 
 
 class DriveClient:
-    def __init__(self, folder_id: str, service):
+    def __init__(self, folder_id: str | None, service):
+        # folder_id는 업로드(upload_png)에만 필요하다 — 대시보드 쪽 다운로드
+        # 버튼(download_file)은 이미 저장된 파일 ID로만 접근하므로 폴더를
+        # 몰라도 된다(GDRIVE_EXPOSURE_FOLDER_ID Secret은 GitHub Actions
+        # 업로드 스크립트 전용, Streamlit 앱은 이 시크릿이 없어도 다운로드는 된다).
         self.folder_id = folder_id
         self.service = service
 
@@ -55,3 +68,22 @@ class DriveClient:
         ).execute()
 
         return {"id": file["id"], "web_view_link": file["webViewLink"]}
+
+    def download_file(self, file_id: str) -> bytes:
+        """파일 ID로 원본 바이트를 내려받는다 — "게재지면 보기" 다운로드 버튼 전용.
+
+        upload_png가 캡쳐 직후 "링크가 있는 모든 사용자 = 뷰어" 권한을 이미
+        붙여두지만, 이 메서드는 서비스 계정 자격증명으로 직접 받으므로 그
+        권한과 무관하게 동작한다(권한 전파 지연이 있어도 안전).
+        """
+        from io import BytesIO
+
+        from googleapiclient.http import MediaIoBaseDownload
+
+        request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        buf = BytesIO()
+        downloader = MediaIoBaseDownload(buf, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buf.getvalue()

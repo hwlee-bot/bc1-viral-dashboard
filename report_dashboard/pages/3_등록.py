@@ -25,7 +25,9 @@ import streamlit as st
 from report_dashboard.auth import (
     ROLE_TEAM, USERS_TABLE, clear_client_emails_cache, client_emails, require_role,
 )
-from report_dashboard import content_sheet_sync, share, ui
+from report_dashboard import content_sheet_sync, exposure_zip, share, ui
+from report_dashboard import drive_client as drive_client_module
+from report_dashboard import repo as repo_module
 from report_dashboard.design_system import inject_design_system
 from report_dashboard.header import render_header
 from report_dashboard.repo import ReportRepo
@@ -612,6 +614,44 @@ with body:
                     for (kw, tab, ctype), c in sorted(latest_capture_by_key.items())
                 )
                 st.markdown('<div class="kw-chips">' + capture_links + '</div>', unsafe_allow_html=True)
+
+                # 게재지면 일괄 다운로드 — 팀장님 요청(2026-09-09): 개별 링크
+                # 말고, 그 날 찍힌 캡쳐 전부를 한 번에 받을 수 있어야 한다.
+                # Drive 다운로드는 몇 초 걸릴 수 있어서 버튼을 두 단계로 나눈다
+                # — "게재지면 보기"가 먼저 zip을 만들어 세션에 담고, 같은 렌더에서
+                # 바로 st.download_button이 뜬다(Streamlit은 다운로드 시점에
+                # 미리 준비된 데이터가 필요해서 지연 생성이 안 된다).
+                capture_dl_dates = exposure_zip.capture_dates(captures_for_campaign)
+                st.markdown('<div class="or">게재지면 일괄 다운로드</div>', unsafe_allow_html=True)
+                dl_col1, dl_col2 = st.columns([3, 1])
+                dl_date = dl_col1.selectbox(
+                    "다운로드할 날짜", options=capture_dl_dates, key="exposure_zip_date",
+                )
+                build_clicked = dl_col2.button("게재지면 보기", key="exposure_zip_build")
+
+                if build_clicked:
+                    with st.spinner(f"{dl_date} 캡쳐 {len(exposure_zip.captures_for_date(captures_for_campaign, dl_date))}건 내려받는 중..."):
+                        settings = repo_module._sheets_settings()
+                        if settings is None:
+                            st.error("Google 서비스 계정 설정을 못 읽었다 — .streamlit/secrets.toml 확인 필요.")
+                        else:
+                            drive_service = drive_client_module.build_drive_service(settings["credentials"])
+                            drive = drive_client_module.DriveClient(folder_id=None, service=drive_service)
+                            day_captures = exposure_zip.captures_for_date(captures_for_campaign, dl_date)
+                            zip_bytes = exposure_zip.build_captures_zip(day_captures, download_fn=drive.download_file)
+                            st.session_state["exposure_zip_ready_key"] = (keyword_campaign_id, dl_date)
+                            st.session_state["exposure_zip_bytes"] = zip_bytes
+
+                # 캠페인·날짜를 바꾸면 이전에 준비해둔 zip은 무효 — 다시 눌러야 한다
+                # (다른 캠페인 이미지를 잘못된 파일명으로 내려받는 걸 막는다).
+                if st.session_state.get("exposure_zip_ready_key") == (keyword_campaign_id, dl_date):
+                    st.download_button(
+                        f"{dl_date} 게재지면 ZIP 다운로드",
+                        data=st.session_state["exposure_zip_bytes"],
+                        file_name=f"{keyword_campaign_label}_{dl_date}_게재지면.zip",
+                        mime="application/zip",
+                        key="exposure_zip_download",
+                    )
 
             st.markdown('<div class="or">브랜드 사전</div>', unsafe_allow_html=True)
             # 캠페인 셀렉트는 st.form 밖에 둔다 — form 안에 있으면 "캠페인 전환 +
