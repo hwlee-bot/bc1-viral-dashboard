@@ -165,6 +165,20 @@ class ReportRepo:
     def save_target_keyword(self, row: dict) -> None:
         self.store.save("viral_target_keywords", row)
 
+    # -- 노출 지면 캡쳐 전용 키워드 (검수/보고 페이지, 2026-09-10) ----------
+    # target_keywords와 별개 테이블이다 — 상위노출·요약·순위수집
+    # (collect_naver_ranks.py)이 보는 키워드와 캡쳐 대상 키워드를 이분화한다.
+    # 캡쳐 쪽만 늘리고 싶을 때(예: 아직 순위 추적은 안 하는 신규 제품 키워드)
+    # 리포트 키워드 목록에 영향을 주지 않기 위해서다.
+
+    def exposure_keywords(self, campaign_id: str | None = None) -> list[dict]:
+        if campaign_id is not None:
+            return self.store.find("viral_exposure_keywords", campaign_id=campaign_id)
+        return self.store.load("viral_exposure_keywords")
+
+    def save_exposure_keyword(self, row: dict) -> None:
+        self.store.save("viral_exposure_keywords", row)
+
     # -- 콘텐츠 시트 연동 링크 (append-only, latest만 의미있음) --------------
 
     def content_sheet_link(self, campaign_id: str) -> dict | None:

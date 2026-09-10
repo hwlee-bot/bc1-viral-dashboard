@@ -16,6 +16,10 @@ SUMMARY = ("요약", "pages/0_요약.py")
 EXPOSURE = ("상위노출", "pages/1_상위노출.py")
 PERFORMANCE = ("콘텐츠 성과", "pages/2_콘텐츠성과.py")
 ADMIN = ("등록 · 관리자", "pages/3_등록.py")
+# 검수/보고 — 팀장님 요청(2026-09-10)으로 신설. 캡쳐 검수·향후 리포팅 항목이
+# 모이는 담당자 전용 페이지. ADMIN과 같은 팀 전용 취급(header.py에서도 같은
+# 우측 슬롯에 나란히 배치).
+REVIEW = ("검수 · 보고", "pages/4_검수보고.py")
 
 
 def pages_for(role: str) -> list[tuple[str, str]]:
@@ -25,7 +29,7 @@ def pages_for(role: str) -> list[tuple[str, str]]:
     들어왔을 때 관리자 페이지가 새는 쪽으로 기울지 않게 한다.
     """
     if role == ROLE_TEAM:
-        return [SUMMARY, EXPOSURE, PERFORMANCE, ADMIN]
+        return [SUMMARY, EXPOSURE, PERFORMANCE, ADMIN, REVIEW]
     return [SUMMARY, EXPOSURE, PERFORMANCE]
 
 

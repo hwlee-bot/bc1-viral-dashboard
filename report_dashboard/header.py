@@ -65,6 +65,11 @@ def render_header(role: str, email: str, campaigns: list[dict], *, current: str)
                 unsafe_allow_html=True,
             )
         links = header_links_for(role)
+        # 등록·관리자는 가운데 리포트 탭 줄이 아니라 우측 전용 슬롯에 둔다(데이터
+        # 입력·관리용 도구라 광고주도 보는 리포트 탭과 분리) — 검수/보고는 팀장님
+        # 요청(2026-09-10)으로 요약·상위노출·콘텐츠 성과와 같은 가운데 줄 맨
+        # 끝에 둔다(리포트 성격이 더 강한 페이지라 판단). pages_for()가 이미
+        # client에겐 REVIEW를 안 돌려주므로 광고주 화면엔 자연히 안 뜬다.
         report_links = [l for l in links if l[0] != ADMIN[0]]
         with mid:
             cols = st.columns(len(report_links))
