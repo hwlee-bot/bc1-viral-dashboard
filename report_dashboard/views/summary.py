@@ -11,7 +11,8 @@ from report_dashboard import charts, frame, ui, views
 from report_dashboard.report_common import SERP_TABS, content_table_html
 from report_dashboard.reporting import (
     build_export_markdown, channel_distribution, daily_view_series, keyword_rank_summary,
-    latest_matched_ranks, latest_sync_timestamp, likes_total,
+    latest_matched_ranks, latest_sync_timestamp, likes_total, to_kst_label,
+    REACTION_SOURCE_BY_CHANNEL,
 )
 
 _KW_TABS = ("카페API", "블로그API")   # 요약 키워드 표의 탭 순서(v3 그대로)
@@ -56,14 +57,19 @@ def build(ctx, campaign) -> frame.FrameContent:
 
 
 def _view_series(ctx) -> list[tuple[str, int]]:
-    """누적 조회수 곡선 — 인스타는 채널 기준으로 아예 뺀다(R22).
+    """누적 조회수 곡선 — 인스타·블로그는 채널 기준으로 아예 뺀다(R22, 블로그는
+    2026-09-11 편입 — 조회수 대신 좋아요·공감 합계 카드로 옮겼다).
 
-    view_metrics는 auto_instagram sentinel을 이미 뺀 상태지만, 수동 입력
-    (manual_instagram 등) 인스타 조회수 행이 섞여 있어도 새어 들어가지 않게
-    콘텐츠 채널로 한 번 더 걸러야 콘텐츠 성과 페이지와 정의가 같아진다.
+    view_metrics는 REACTION_SOURCE_BY_CHANNEL 소스(auto_instagram·
+    auto_blog_reaction) sentinel을 이미 뺀 상태지만, 수동 입력(manual_instagram
+    등) 조회수 행이 섞여 있어도 새어 들어가지 않게 콘텐츠 채널로 한 번 더
+    걸러야 콘텐츠 성과 페이지와 정의가 같아진다.
     """
     by_id = ctx["contents_by_id"]
-    return daily_view_series([m for m in ctx["view_metrics"] if by_id.get(m["content_id"], {}).get("channel") != "instagram"])
+    return daily_view_series([
+        m for m in ctx["view_metrics"]
+        if by_id.get(m["content_id"], {}).get("channel") not in REACTION_SOURCE_BY_CHANNEL
+    ])
 
 
 def _best_rank(ctx):
@@ -85,12 +91,12 @@ def _best_rank(ctx):
 
 def _meta_html(ctx, campaign) -> str:
     period = f"{campaign.get('start_date') or '—'} – {campaign.get('end_date') or '진행 중'}"
-    synced = latest_sync_timestamp(ctx["all_metrics"])   # 상위노출 페이지와 같은 "YYYY-MM-DD HH:MM" 표기
+    synced = to_kst_label(latest_sync_timestamp(ctx["all_metrics"]))  # KST 변환(콜렉터는 UTC로 찍음)
     return (
         f"<b>{ui.esc(period)}</b> · 콘텐츠 <span data-meta=\"contents\">{len(ctx['contents'])}</span>건 · "
         f"채널 <span data-meta=\"channels\">{len(channel_distribution(ctx['contents']))}</span>개 · "
         f"추적 키워드 {len(ctx['target_keywords'])}개 · "
-        f"마지막 수집 {ui.esc(synced[:16].replace('T', ' ')) if synced else '없음'}"
+        f"마지막 수집 {ui.esc(synced) if synced else '없음'}"
     )
 
 
@@ -114,12 +120,13 @@ def _stats(ctx, series: list[tuple[str, int]], payload: dict) -> list[str]:
             series,
             "카페·커뮤니티 자동 수집",
         ),
-        # 좋아요 합은 라벨의 `.pill`이다(리뷰 4) — 목업 카드 레이아웃(label / figure / spark /
+        # 좋아요·공감 합은 라벨의 `.pill`이다(리뷰 4) — 목업 카드 레이아웃(label / figure / spark /
         # delta)을 그대로 두면서 `누적 조회수`의 `카페·커뮤니티` pill과 같은 패턴을 쓴다.
         # figure 안에 두면 `put("contents")`가 캐시한 `<small>`에 좋아요 span이 딸려 들어가
-        # 두 호출의 순서에 결과가 걸린다(그 의존을 없앴다).
+        # 두 호출의 순서에 결과가 걸린다(그 의존을 없앴다). 블로그 공감수는 조회수가
+        # 아니라 여기(2026-09-11, 팀장님 지시로 총 조회수에서 옮김)에 합류한다.
         views.strip_card(
-            f'등록 콘텐츠 <span class="pill">인스타 좋아요 합 <span data-stat="likes">{likes:,}</span></span>',
+            f'등록 콘텐츠 <span class="pill">인스타·블로그 반응 합 <span data-stat="likes">{likes:,}</span></span>',
             "contents",
             views.stat_figure("contents", f"{len(ctx['contents'])}<small>건</small>"),
             views.series_points(payload["series"]["contents"]),

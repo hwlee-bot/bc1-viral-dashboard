@@ -6,9 +6,42 @@ Streamlit에 의존하지 않는다 — `pages/1_상위노출.py`·`pages/2_콘�
 """
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta
 
 TOP_EXPOSURE_RANK = 10  # 네이버 검색 1페이지 진입 기준
+
+# 채널별 "조회수 대신 반응 수를 대표 지표로 쓰는" 소스 — 이 채널들은 조회수를
+# 구조적으로 못 모은다(인스타는 스펙 §1, 블로그는 2026-09-11 도구노트-검색수집.md
+# 실측). 좋아요(인스타)·공감수(블로그) 둘 다 이 사전 하나로 관리한다 — 새
+# 채널이 같은 사정으로 추가되면 여기 한 곳만 늘리면 된다.
+REACTION_SOURCE_BY_CHANNEL = {"instagram": "auto_instagram", "blog": "auto_blog_reaction"}
+
+# 조회수 시계열에 섞이면 안 되는 소스 — "views" 필드가 0이거나 조회수가 아닌
+# 반응 수(좋아요·공감수)를 임시로 채워둔 sentinel 행이다. REACTION_SOURCE_BY_CHANNEL의
+# 값과 항상 같은 집합이어야 하므로 거기서 유도한다 — 따로 관리하면 새 채널을
+# 추가할 때 이 목록에 반영을 빠뜨리기 쉽다.
+NON_VIEW_METRIC_SOURCES = frozenset(REACTION_SOURCE_BY_CHANNEL.values())
+
+_KST_OFFSET = timedelta(hours=9)
+
+
+def to_kst_label(iso: str | None, *, with_time: bool = True) -> str:
+    """콜렉터 타임스탬프(captured_at/started_at 등)를 KST 표시 문자열로 바꾼다.
+
+    collect_naver_ranks.py·collect_comments.py·collect_twitter_metrics.py는
+    전부 GitHub Actions 러너 위에서 `datetime.now()`(naive)로 시각을 찍는데,
+    그 러너의 시스템 시간대가 UTC라 저장되는 값은 실제로 UTC다. 화면에
+    변환 없이 그대로 노출하면(예: 매일 06:00~07:30 KST에 도는 콜렉터가
+    "전날 21:00~22:30"으로 찍혀) 실제보다 하루 이른 날짜로 보인다(2026-09-11
+    실측 확인). 저장 포맷은 안 건드리고 표시 시점에만 +9시간 보정한다."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso[:19])
+    except ValueError:
+        return ""
+    dt += _KST_OFFSET
+    return dt.strftime("%Y-%m-%d %H:%M") if with_time else dt.strftime("%Y-%m-%d")
 
 
 def _latest_by_content(rows: list[dict], content_id: str, order_field: str) -> dict | None:
@@ -162,22 +195,31 @@ def rank_history(ranks_for_content: list[dict]) -> list[tuple[str, int]]:
     return [(date, by_date[date]) for date in sorted(by_date.keys())]
 
 
-def likes_history(metrics_for_content: list[dict]) -> list[tuple[str, int]]:
-    """콘텐츠 하나의 좋아요 수 이력을 관측일 오름차순으로 돌려준다.
+def reaction_history(metrics_for_content: list[dict], source: str) -> list[tuple[str, int]]:
+    """콘텐츠 하나의 반응 수(좋아요·공감) 이력을 관측일 오름차순으로 돌려준다.
 
-    auto_instagram 소스 행만 본다 — rank_history와 같은 방어적 설계로,
-    인스타가 아닌 채널이나 조회수만 있는 행이 섞여 들어와도 안전하다.
-    같은 날 행이 여러 개면 리스트에서 더 나중 값을 쓴다(재실행 등 대비).
+    지정한 source 행만 본다 — rank_history와 같은 방어적 설계로, 다른
+    채널이나 조회수만 있는 행이 섞여 들어와도 안전하다. 같은 날 행이
+    여러 개면 리스트에서 더 나중 값을 쓴다(재실행 등 대비). likes_history
+    (인스타 전용)와 2026-09-11 신설 블로그 공감수가 이 함수를 같이 쓴다.
     """
     by_date: dict[str, int] = {}
     for row in metrics_for_content:
-        if row.get("source") != "auto_instagram":
+        if row.get("source") != source:
             continue
         likes = row.get("likes_count")
         if likes is None:
             continue
         by_date[row["captured_at"]] = likes
     return [(date, by_date[date]) for date in sorted(by_date.keys())]
+
+
+def likes_history(metrics_for_content: list[dict]) -> list[tuple[str, int]]:
+    """인스타 좋아요 수 이력 — reaction_history(..., "auto_instagram")의 얇은 별칭.
+
+    기존 호출부·테스트가 이 이름·시그니처를 그대로 쓰므로 남겨둔다.
+    """
+    return reaction_history(metrics_for_content, "auto_instagram")
 
 
 def target_progress_pct(current_views: int, target_views: int) -> int:
@@ -275,7 +317,7 @@ def _views_as_of(metrics_for_content: list[dict], cutoff: str) -> int:
     sentinel 행(스펙 §4.2, 실제 조회수 아님)은 제외한다."""
     candidates = [
         m for m in metrics_for_content
-        if m.get("source") != "auto_instagram" and m["captured_at"][:10] <= cutoff
+        if m.get("source") not in NON_VIEW_METRIC_SOURCES and m["captured_at"][:10] <= cutoff
     ]
     if not candidates:
         return 0
@@ -408,11 +450,16 @@ def daily_view_series(view_metrics: list[dict]) -> list[tuple[str, int]]:
 
 
 def likes_total(all_metrics: list[dict], contents: list[dict]) -> int:
+    """인스타 좋아요 + 블로그 공감수 합(2026-09-11부터 블로그 편입 — 팀장님 지시:
+    "수동입력 안 할 거니 총 조회수 카드도 고쳐야 한다"에 따라 블로그는 총
+    조회수가 아니라 이 합계로 옮겨왔다). REACTION_SOURCE_BY_CHANNEL에 없는
+    채널(조회수를 실제로 모으는 채널)은 대상이 아니다."""
     total = 0
     for c in contents:
-        if c["channel"] != "instagram":
+        source = REACTION_SOURCE_BY_CHANNEL.get(c["channel"])
+        if not source:
             continue
-        hist = likes_history([m for m in all_metrics if m["content_id"] == c["content_id"]])
+        hist = reaction_history([m for m in all_metrics if m["content_id"] == c["content_id"]], source)
         if hist:
             total += hist[-1][1]
     return total

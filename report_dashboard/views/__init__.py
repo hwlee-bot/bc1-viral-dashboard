@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from report_dashboard import charts, share, ui
 from report_dashboard.report_common import _content_rows, _row_participation_rate, plain_section_header
-from report_dashboard.reporting import channel_distribution, delta_over_days, participation_rate
+from report_dashboard.reporting import NON_VIEW_METRIC_SOURCES, channel_distribution, delta_over_days, participation_rate
 
 # 평문 `.sec-h` 헤더(R12) — 세 뷰가 `views.sec_h(...)`로 쓴다. 정의가 report_common에
 # 있는 건 순환 import 때문이다(`report_common.watchlist_html`·`impact_block_html`도 같은
@@ -332,7 +332,7 @@ def rate_series(ctx) -> dict:
     for content in tracked:
         cid = content["content_id"]
         rows = sorted(
-            (m for m in ctx["all_metrics"] if m["content_id"] == cid and m.get("source") != "auto_instagram"),
+            (m for m in ctx["all_metrics"] if m["content_id"] == cid and m.get("source") not in NON_VIEW_METRIC_SOURCES),
             key=lambda m: m["captured_at"],
         )
         per_content.append((content["channel"], rows))

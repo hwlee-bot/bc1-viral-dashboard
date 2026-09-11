@@ -39,7 +39,8 @@ from report_dashboard.reporting import (
     channel_distribution, delta_over_days, exposure_counts_by_channel,
     keyword_impact_leaderboard, keyword_rank_summary, keyword_weekly_exposure_counts, keyword_weekly_view_sums,
     latest_keyword_serp, latest_matched_ranks, latest_rank_row, latest_views, likes_history,
-    participation_rate, rank_history, week_label, TOP_EXPOSURE_RANK,
+    participation_rate, rank_history, reaction_history, to_kst_label, week_label,
+    NON_VIEW_METRIC_SOURCES, REACTION_SOURCE_BY_CHANNEL, TOP_EXPOSURE_RANK,
 )
 
 CHANNELS = ["youtube", "blog", "cafe", "community", "instagram", "twitter"]
@@ -71,15 +72,27 @@ SERP_READ_BATCHES = 20
 _SHARE_COLORS = ["var(--accent)", "var(--ch-blog)", "var(--ch-community)", "var(--s3)"]
 
 
+_REACTION_SOURCE_BY_CHANNEL = REACTION_SOURCE_BY_CHANNEL  # reporting.py가 정본(likes_total과 공유)
+_REACTION_UNIT_BY_CHANNEL = {"instagram": "좋아요", "blog": "공감"}
+
+
+def _primary_metric_unit(channel: str) -> str:
+    """표의 대표 지표 숫자 옆에 붙는 단위 라벨 — 조회수를 못 모으는 채널은
+    무엇을 대신 세고 있는지(좋아요·공감) 밝힌다."""
+    return _REACTION_UNIT_BY_CHANNEL.get(channel, "조회")
+
+
 def _primary_metric_value(content: dict, view_metrics: list[dict], all_metrics: list[dict]) -> int:
-    """카드 정렬·빈 상태 판정에 쓸 대표 지표. 인스타는 조회수를 구조적으로
-    못 모으므로(스펙 §1) 좋아요 최신값을 대신 쓴다 — 안 그러면 좋아요
-    데이터가 있어도 카드가 항상 '데이터 없음'으로 표시되고 맨 아래로
-    밀린다. 콘텐츠 성과 페이지의 카드 정렬·히어로 스탯(최다 조회 콘텐츠)
-    둘 다 이 함수를 쓴다."""
-    if content["channel"] == "instagram":
+    """카드 정렬·빈 상태 판정에 쓸 대표 지표. 인스타·블로그는 조회수를
+    구조적으로 못 모으므로(스펙 §1, 블로그는 2026-09-11 도구노트-검색수집.md
+    재확인) 좋아요·공감수 최신값을 대신 쓴다 — 안 그러면 반응 데이터가
+    있어도 카드가 항상 '데이터 없음'으로 표시되고 맨 아래로 밀린다.
+    콘텐츠 성과 페이지의 카드 정렬·히어로 스탯(최다 조회 콘텐츠) 둘 다
+    이 함수를 쓴다."""
+    source = _REACTION_SOURCE_BY_CHANNEL.get(content["channel"])
+    if source:
         cid = content["content_id"]
-        series = likes_history([m for m in all_metrics if m["content_id"] == cid])
+        series = reaction_history([m for m in all_metrics if m["content_id"] == cid], source)
         return series[-1][1] if series else 0
     return latest_views(view_metrics, content["content_id"])
 
@@ -142,7 +155,7 @@ def load_campaign_context(repo, campaign_id: str, channel_filter: list[str]) -> 
         return None
     content_ids = {c["content_id"] for c in contents}
     all_metrics = [m for m in repo.content_metrics() if m["content_id"] in content_ids]
-    view_metrics = [m for m in all_metrics if m.get("source") != "auto_instagram"]
+    view_metrics = [m for m in all_metrics if m.get("source") not in NON_VIEW_METRIC_SOURCES]
     all_ranks = [r for r in repo.keyword_ranks() if r["content_id"] in content_ids]
     all_comments = [c for c in repo.comments() if c["content_id"] in content_ids]
     # 원시 행까지 남긴다 — `views.keyword_count_series`가 `created_at`으로 등록 추이를 그린다(§11.3).
@@ -166,7 +179,11 @@ def _content_rows(ctx):
         cid = c["content_id"]
         metrics = sorted((m for m in ctx["all_metrics"] if m["content_id"] == cid), key=lambda m: m["captured_at"])
         pv = _primary_metric_value(c, ctx["view_metrics"], ctx["all_metrics"])
-        series = [v for _, v in likes_history(metrics)] if c["channel"] == "instagram" else [m["views"] for m in metrics if m.get("source") != "auto_instagram"]
+        reaction_source = _REACTION_SOURCE_BY_CHANNEL.get(c["channel"])
+        series = (
+            [v for _, v in reaction_history(metrics, reaction_source)] if reaction_source
+            else [m["views"] for m in metrics if m.get("source") not in NON_VIEW_METRIC_SOURCES]
+        )
         # animate=False: 이 표는 행이 많아 스크롤 중 등장 모션이 아래쪽 행에서 안정적으로
         # 안 걸린다(charts.sparkline_svg 주석 참고) — 여기만 처음부터 그려진 선으로 둔다.
         spark = charts.sparkline_svg(series, width=84, height=22, animate=False) if len(series) >= 2 else ""
@@ -177,14 +194,16 @@ def _content_rows(ctx):
 
 
 def _row_participation_rate(ctx, content: dict, primary_value: int) -> float | None:
-    """행 정렬용 참여율. 인스타는 조회수를 구조적으로 못 모으므로(§1) 항상
-    None — nonzero 그룹 안에서도 맨 뒤로 보낸다(R16). 나머지 채널은 콘텐츠의
-    최신 non-auto_instagram 지표 행(댓글수)을 pv(=최신 조회수)와 나눈다."""
-    if content["channel"] == "instagram":
+    """행 정렬용 참여율. 인스타·블로그는 조회수를 구조적으로 못 모으므로(§1)
+    항상 None — nonzero 그룹 안에서도 맨 뒤로 보낸다(R16). primary_value가
+    이 두 채널은 조회수가 아니라 좋아요·공감수라, "댓글÷조회수"인 참여율을
+    "댓글÷공감수"로 잘못 계산하면 안 된다. 나머지 채널은 콘텐츠의 최신
+    non-view-sentinel 지표 행(댓글수)을 pv(=최신 조회수)와 나눈다."""
+    if content["channel"] in _REACTION_SOURCE_BY_CHANNEL:
         return None
     cid = content["content_id"]
     vm_c = sorted(
-        (m for m in ctx["all_metrics"] if m["content_id"] == cid and m.get("source") != "auto_instagram"),
+        (m for m in ctx["all_metrics"] if m["content_id"] == cid and m.get("source") not in NON_VIEW_METRIC_SOURCES),
         key=lambda m: m["captured_at"],
     )
     if not vm_c:
@@ -247,24 +266,28 @@ def content_detail_html(ctx, content_id: str) -> str:
     metrics = sorted((m for m in ctx["all_metrics"] if m["content_id"] == content_id), key=lambda m: m["captured_at"])
     comments = [k for k in ctx["all_comments"] if k["content_id"] == content_id]
     is_ig = c["channel"] == "instagram"
-    if is_ig:
-        hist = likes_history(metrics)
+    reaction_source = _REACTION_SOURCE_BY_CHANNEL.get(c["channel"])
+    if reaction_source:
+        # 인스타(좋아요)·블로그(공감수, 2026-09-11 신설) 둘 다 조회수를 구조적으로
+        # 못 모으므로 반응 수를 대표 지표로 쓴다 — "조회수는 사실상 안 되니
+        # 카드에서 그 자리를 반응 수로 바꾸자"는 팀장님 지시(2026-09-11).
+        hist = reaction_history(metrics, reaction_source)
         series, dates = [v for _, v in hist], [d[:10] for d, _ in hist]
-        primary, primary_label = (series[-1] if series else None), "좋아요"
-        manual = [m for m in metrics if m.get("source") != "auto_instagram"]
+        primary, primary_label = (series[-1] if series else None), _REACTION_UNIT_BY_CHANNEL[c["channel"]]
+        manual = [m for m in metrics if m.get("source") not in NON_VIEW_METRIC_SOURCES]
         third = (f"{manual[-1]['views']:,}", "조회수(참고)", "수동 입력") if manual else ("—", "조회수(참고)", "수동 입력 없음")
         # KPI 캡션(정확도·시각)은 primary 숫자를 만든 것과 같은 행에서 뽑는다(§8) —
-        # likes_history가 실제로 본 auto_instagram 행 중 가장 최근 것.
-        auto_rows = [m for m in metrics if m.get("source") == "auto_instagram" and m.get("likes_count") is not None]
+        # reaction_history가 실제로 본 reaction_source 행 중 가장 최근 것.
+        auto_rows = [m for m in metrics if m.get("source") == reaction_source and m.get("likes_count") is not None]
         source_row = auto_rows[-1] if auto_rows else None
     else:
-        vm = [m for m in metrics if m.get("source") != "auto_instagram"]
+        vm = [m for m in metrics if m.get("source") not in NON_VIEW_METRIC_SOURCES]
         series, dates = [m["views"] for m in vm], [m["captured_at"][:10] for m in vm]
         primary, primary_label = (series[-1] if series else None), "조회수"
         rate = participation_rate(primary, vm[-1].get("comments_count")) if vm else None
         third = (f"{rate:.1f}%" if rate is not None else "—", "참여율", "댓글 ÷ 조회수")
         source_row = vm[-1] if vm else None
-    latest_at = (source_row["captured_at"][:16].replace("T", " ") if source_row else "—")
+    latest_at = (to_kst_label(source_row["captured_at"]) if source_row else "—")
     kpis = (
         f'<div class="kpi"><span class="label">{primary_label}</span><div class="figure num">{f"{primary:,}" if primary is not None else "—"}</div><div class="sub">{_esc(source_row["accuracy"]) if source_row else "미수집"} · {latest_at}</div></div>'
         f'<div class="kpi"><span class="label">댓글</span><div class="figure num">{len(comments)}</div><div class="sub">자동 수집</div></div>'
@@ -311,7 +334,7 @@ def content_table_html(ctx, *, limit=None) -> str:
     vmax = max((r[1] for r in rows), default=0) or 1
     body = []
     for i, (c, pv, spark, n_comments, rank) in enumerate(rows):
-        unit = "좋아요" if c["channel"] == "instagram" else "조회"
+        unit = _primary_metric_unit(c["channel"])
         hidden = " hidden" if limit is not None and i >= limit else ""
         attrs = row_data_attrs(c, pv, n_comments, _row_participation_rate(ctx, c, pv))
         rank_html = ui.rank_badge(rank["rank"] if rank else None, "—") if c["channel"] != "instagram" else '<span class="label">—</span>'
@@ -356,7 +379,7 @@ def content_list_rows_html(ctx, selected_id: str | None) -> str:
     vmax = max((r[1] for r in rows), default=0) or 1
     body = []
     for c, pv, spark, n_comments, rank in rows:
-        unit = "좋아요" if c["channel"] == "instagram" else "조회"
+        unit = _primary_metric_unit(c["channel"])
         cls = ' class="is-sel"' if c["content_id"] == sel_id else ""
         attrs = row_data_attrs(c, pv, n_comments, _row_participation_rate(ctx, c, pv))
         rank_html = ui.rank_badge(rank["rank"] if rank else None, "—") if c["channel"] != "instagram" else '<span class="label">—</span>'

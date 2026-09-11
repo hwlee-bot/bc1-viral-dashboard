@@ -13,7 +13,7 @@ from report_dashboard.report_common import (
     CHANNELS, SERP_TABS, exposure_rows_html, impact_block_html, serp_columns_html,
     share_legend_html, share_section_html, watchlist_html,
 )
-from report_dashboard.reporting import build_export_markdown, keyword_rank_summary
+from report_dashboard.reporting import build_export_markdown, keyword_rank_summary, to_kst_label
 
 # 네이버 순위를 추적하는 채널만 칩으로 낸다 — 인스타·트위터는 SERP 대상이
 # 아니다(§4.3, 트위터는 2026-09-07 신규 — 네이버가 색인하는 채널이 아니라
@@ -92,9 +92,9 @@ def _share_rows_and_total(ctx, kws, terms, ours, *, weighted: bool, slots: int) 
 
 
 def _last_collected(ctx) -> str:
-    """SERP 마지막 수집 시각 "YYYY-MM-DD HH:MM"(없으면 빈 문자열) — 원시 ISO는 노출하지 않는다."""
+    """SERP 마지막 수집 시각 "YYYY-MM-DD HH:MM"(없으면 빈 문자열, KST 변환됨) — 원시 ISO는 노출하지 않는다."""
     at = max((r["captured_at"] for r in ctx["keyword_serp_for_campaign"]), default=None)
-    return at[:16].replace("T", " ") if at else ""
+    return to_kst_label(at)
 
 
 def _meta_html(kws: list[str], collected: str) -> str:

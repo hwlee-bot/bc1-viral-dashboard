@@ -8,11 +8,15 @@ from __future__ import annotations
 from report_dashboard import frame, ui, views
 from report_dashboard.report_common import content_detail_html, content_list_rows_html, sorted_content_rows
 from report_dashboard.reporting import (
-    build_export_markdown, daily_view_series, latest_views, likes_history, likes_total,
+    build_export_markdown, daily_view_series, latest_views, likes_total,
+    reaction_history, REACTION_SOURCE_BY_CHANNEL,
 )
 
 _SORTS = (("value", "조회·좋아요"), ("comments", "댓글"), ("rate", "참여율"), ("recent", "최신"))
-_META_TAIL = " · 좋아요·조회수·댓글 매일 06:30 자동 수집 · 인스타 조회수는 수집 불가(좋아요로 대체)"
+_META_TAIL = (
+    " · 좋아요·공감·조회수·댓글 매일 06:30 자동 수집 · 인스타 조회수는 수집 불가(좋아요로 대체)"
+    " · 블로그 조회수는 네이버 비공개라 수집 불가(공감수로 대체, 수동 입력 안 함)"
+)
 # 목업 원문: 리스트 섹션 헤더는 ui.section_header(.sec-h.reveal)가 아니라 margin-top이 붙은 .sec-h다(R12).
 _LIST_SEC_H = views.sec_h(
     "전체 콘텐츠",
@@ -66,8 +70,12 @@ def _controls_html(contents: list[dict], has_md: bool) -> str:
 
 
 def _stats(ctx, payload) -> list[str]:
+    # 인스타·블로그는 조회수 대신 반응 수(좋아요·공감)를 쓰는 채널이라(REACTION_SOURCE_BY_CHANNEL)
+    # "총 조회수"에서 뺀다 — 블로그는 수동 입력도 안 하기로 해서(2026-09-11) 항상 0으로
+    # 잡힐 값을 굳이 합산 대상에 넣어두지 않는다.
     total_views = sum(
-        latest_views(ctx["view_metrics"], c["content_id"]) for c in ctx["contents"] if c["channel"] != "instagram"
+        latest_views(ctx["view_metrics"], c["content_id"])
+        for c in ctx["contents"] if c["channel"] not in REACTION_SOURCE_BY_CHANNEL
     )
     series = payload["series"]
     view_points = views.series_points(series["views"])
@@ -86,11 +94,11 @@ def _stats(ctx, payload) -> list[str]:
             "카페·커뮤니티 자동 수집",
         ),
         views.strip_card(
-            '총 좋아요 <span class="pill">인스타</span>',
+            '총 좋아요·공감 <span class="pill">인스타·블로그</span>',
             "likes",
             views.stat_figure("likes", f"{likes_total(ctx['all_metrics'], ctx['contents']):,}"),
             likes_points,
-            "인스타 자동 수집",
+            "인스타 좋아요·블로그 공감 자동 수집",
         ),
         views.strip_card(
             "평균 참여율", "rate", views.stat_figure("rate", rate_html), rate_pts, "댓글 ÷ 조회수", unit="pt",
@@ -135,16 +143,19 @@ def _payload(ctx) -> dict:
     (채널별 평균을 다시 평균하면 콘텐츠 수가 다른 채널이 같은 무게를 갖게 되어 틀린다).
     """
     by_id = ctx["contents_by_id"]
-    view_channels = sorted({c["channel"] for c in ctx["contents"] if c["channel"] != "instagram"})
+    view_channels = sorted({c["channel"] for c in ctx["contents"] if c["channel"] not in REACTION_SOURCE_BY_CHANNEL})
     per_channel = {
         channel: daily_view_series([m for m in ctx["view_metrics"] if by_id[m["content_id"]]["channel"] == channel])
         for channel in view_channels
     }
-    ig_series = [
-        likes_history([m for m in ctx["all_metrics"] if m["content_id"] == c["content_id"]])
-        for c in ctx["contents"] if c["channel"] == "instagram"
-    ]
-    likes_per_channel = {"instagram": views.daily_sum_of_latest(ig_series)} if ig_series else {}
+    likes_per_channel = {}
+    for channel, source in REACTION_SOURCE_BY_CHANNEL.items():
+        series = [
+            reaction_history([m for m in ctx["all_metrics"] if m["content_id"] == c["content_id"]], source)
+            for c in ctx["contents"] if c["channel"] == channel
+        ]
+        if series:
+            likes_per_channel[channel] = views.daily_sum_of_latest(series)
     return {
         "series": {
             "views": views.payload_series(per_channel),

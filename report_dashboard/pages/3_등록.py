@@ -29,7 +29,7 @@ from report_dashboard import content_sheet_sync, share, ui
 from report_dashboard.design_system import inject_design_system
 from report_dashboard.header import render_header
 from report_dashboard.repo import ReportRepo
-from report_dashboard.reporting import latest_collection_runs_by_type
+from report_dashboard.reporting import latest_collection_runs_by_type, to_kst_label
 
 # 게이트를 이 파일에서도 호출한다 — 이유는 1_상위노출.py 상단 주석과 같다
 # (uses_pages_directory 플래그가 True인 창에서는 app.py가 아예 실행되지 않는다).
@@ -640,7 +640,9 @@ with body:
     with manual_col:
         _blk(
             "sec-manual", "수동 조회수",
-            "인스타그램 콘텐츠는 항상 여기서 입력한다. 그 외 채널은 자동 수집이 실패했을 때만 여기 뜬다.",
+            "인스타그램 콘텐츠는 항상 여기서 입력한다. 그 외 채널은 자동 수집이 실패했을 때만 여기 뜬다."
+            " 블로그 조회수는 네이버가 글쓴이 통계 페이지에만 보여줘서 자동 수집이 안 되지만,"
+            " 수동 입력은 안 하기로 했다(2026-09-11) — 블로그 카드는 조회수 대신 공감수로 대표 지표를 보여준다.",
         )
 
         # latest_run / failed_content_ids / all_contents는 스크립트 상단에서 이미
@@ -701,7 +703,7 @@ with body:
         if latest_run is None:
             st.info("아직 자동 수집이 실행된 적 없다.")
         else:
-            st.write(f"마지막 실행: {latest_run.get('started_at', '')} ~ {latest_run.get('finished_at', '')}")
+            st.write(f"마지막 실행: {to_kst_label(latest_run.get('started_at'))} ~ {to_kst_label(latest_run.get('finished_at'))}")
             st.write(f"대상 {latest_run.get('target_count', 0)}건 중 {latest_run.get('success_count', 0)}건 성공")
             if failed_content_ids:
                 failed_titles = [_label(c) for c in all_contents if c["content_id"] in failed_content_ids]
@@ -740,7 +742,7 @@ with body:
             status_kind, status_label = "fail", "실패"
         status_rows_html.append(
             f'<div class="hs"><div class="n"><b>{run_title}</b><small>{sched}</small></div>'
-            f'<span class="mono">{ui.esc(r.get("started_at", "")[:16].replace("T", " "))}</span>'
+            f'<span class="mono">{ui.esc(to_kst_label(r.get("started_at")))}</span>'
             f'<span class="mono label">{success} / {target} 성공</span>'
             f'{ui.status(status_kind, status_label)}</div>'
         )
