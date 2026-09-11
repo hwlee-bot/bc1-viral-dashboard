@@ -36,7 +36,7 @@ import html as html_lib
 from report_dashboard import charts, ui
 from report_dashboard import share
 from report_dashboard.reporting import (
-    channel_distribution, delta_over_days, exposure_counts_by_channel,
+    channel_distribution, comment_count_floor, delta_over_days, exposure_counts_by_channel,
     keyword_impact_leaderboard, keyword_rank_summary, keyword_weekly_exposure_counts, keyword_weekly_view_sums,
     latest_keyword_serp, latest_matched_ranks, latest_rank_row, latest_views, likes_history,
     participation_rate, rank_history, reaction_history, to_kst_label, week_label,
@@ -187,7 +187,13 @@ def _content_rows(ctx):
         # animate=False: 이 표는 행이 많아 스크롤 중 등장 모션이 아래쪽 행에서 안정적으로
         # 안 걸린다(charts.sparkline_svg 주석 참고) — 여기만 처음부터 그려진 선으로 둔다.
         spark = charts.sparkline_svg(series, width=84, height=22, animate=False) if len(series) >= 2 else ""
-        n_comments = sum(1 for k in ctx["all_comments"] if k["content_id"] == cid)
+        # 실제 동기화된 댓글 레코드 수와, 콜렉터가 원문과 별개로 확인한 "진짜 개수"
+        # (comment_count_floor) 중 큰 쪽을 쓴다 — 블로그 일부 글은 CBOX가 원문을
+        # 못 가져와도 개수는 알 수 있다(2026-09-11, "댓글 4인데 0으로 뜬다" 지적).
+        n_comments = max(
+            sum(1 for k in ctx["all_comments"] if k["content_id"] == cid),
+            comment_count_floor(ctx["all_metrics"], cid),
+        )
         rank = latest_rank_row(ctx["all_ranks"], cid)
         out.append((c, pv, spark, n_comments, rank))
     return sorted(out, key=lambda t: (t[1] == 0, -t[1]))
@@ -265,6 +271,9 @@ def content_detail_html(ctx, content_id: str) -> str:
     c = ctx["contents_by_id"][content_id]
     metrics = sorted((m for m in ctx["all_metrics"] if m["content_id"] == content_id), key=lambda m: m["captured_at"])
     comments = [k for k in ctx["all_comments"] if k["content_id"] == content_id]
+    # 실제 동기화된 레코드 수와 콜렉터가 별도로 확인한 "진짜 개수" 중 큰 쪽 —
+    # 블로그 일부 글은 CBOX가 원문을 못 가져와도 개수는 안다(2026-09-11).
+    comment_count = max(len(comments), comment_count_floor(ctx["all_metrics"], content_id))
     is_ig = c["channel"] == "instagram"
     reaction_source = _REACTION_SOURCE_BY_CHANNEL.get(c["channel"])
     if reaction_source:
@@ -290,7 +299,7 @@ def content_detail_html(ctx, content_id: str) -> str:
     latest_at = (to_kst_label(source_row["captured_at"]) if source_row else "—")
     kpis = (
         f'<div class="kpi"><span class="label">{primary_label}</span><div class="figure num">{f"{primary:,}" if primary is not None else "—"}</div><div class="sub">{_esc(source_row["accuracy"]) if source_row else "미수집"} · {latest_at}</div></div>'
-        f'<div class="kpi"><span class="label">댓글</span><div class="figure num">{len(comments)}</div><div class="sub">자동 수집</div></div>'
+        f'<div class="kpi"><span class="label">댓글</span><div class="figure num">{comment_count}</div><div class="sub">자동 수집</div></div>'
         f'<div class="kpi"><span class="label">{third[1]}</span><div class="figure num">{third[0]}</div><div class="sub">{third[2]}</div></div>'
     )
     chart = (f'<div class="chart">{charts.area_chart_svg(series, labels=[d[5:].replace("-", ".") for d in dates], width=420, height=140, pad_right=52)}</div>'
@@ -303,15 +312,21 @@ def content_detail_html(ctx, content_id: str) -> str:
         latest = latest_rank_row(ctx["all_ranks"], content_id)
         rank_block = ui.section_header("네이버 순위 추이", right_html=(f'{ui.rank_badge(latest["rank"])} <span class="label">{_esc(latest["keyword"])} · {_esc(latest.get("search_tab", "").replace("API", ""))}</span>' if latest else ui.rank_badge(None)))
         rank_block += (f'<div class="chart">{charts.rank_chart_svg(ranks, width=420, height=90)}</div>' if len(ranks) >= 2 else ui.empty_state("아직 측정된 순위가 없습니다", "키워드 수집 후 표시됩니다."))
-    cm = "".join(f'<div class="cm"><span><b>{_esc(k.get("author_nickname") or "익명")}</b>{_esc(k["text"])}</span><small>{_esc((k.get("commented_at") or "")[:10])}</small></div>' for k in comments[:8]) \
-        or ui.empty_state("수집된 댓글이 없습니다", "카페·인스타 댓글은 매일 06:30 수집됩니다.")
+    if comments:
+        cm = "".join(f'<div class="cm"><span><b>{_esc(k.get("author_nickname") or "익명")}</b>{_esc(k["text"])}</span><small>{_esc((k.get("commented_at") or "")[:10])}</small></div>' for k in comments[:8])
+    elif comment_count:
+        # 개수는 확인했지만 원문은 못 가져온 경우(예: 블로그 CBOX 라우팅 실패,
+        # 2026-09-11) — "댓글이 없다"고 하면 거짓말이니 다르게 안내한다.
+        cm = ui.empty_state(f"개수만 확인됨({comment_count}건) — 원문은 아직 못 가져왔습니다", "다음 수집에서 다시 시도합니다.")
+    else:
+        cm = ui.empty_state("수집된 댓글이 없습니다", "카페·인스타 댓글은 매일 06:30 수집됩니다.")
     return (
         f'<aside class="detail"><div class="dh"><div><h2>{_esc(c.get("title") or c["url"])}</h2>'
         f'<div class="meta">{ui.channel_icon(c["channel"])}{_esc(ui.CHANNEL_LABEL.get(c["channel"], c["channel"]))} · {_esc((c.get("release_at") or "미정")[:10])} 게시 · <a href="{_esc(_safe_href(c["url"]))}" target="_blank" rel="noopener noreferrer">원문 열기 ↗</a></div></div></div>'
         f'<div class="kpis">{kpis}</div>'
         + ui.section_header(f"{primary_label} 추이", right_html=f'<span class="label">{len(series)}회 수집</span>') + chart
         + rank_block
-        + ui.section_header(f"댓글 {len(comments)}") + cm
+        + ui.section_header(f"댓글 {comment_count}") + cm
         + "</aside>"
     )
 

@@ -449,6 +449,29 @@ def daily_view_series(view_metrics: list[dict]) -> list[tuple[str, int]]:
     return series
 
 
+def comment_count_floor(all_metrics: list[dict], content_id: str) -> int:
+    """콘텐츠의 최신 메트릭 행에 실린 comments_count(있으면)를 돌려준다 — 없으면 0.
+
+    2026-09-11 신설 배경: 실제로 동기화된 댓글 레코드 수(`len(viral_comments)`)가
+    항상 진짜 댓글 개수와 같지는 않다 — 블로그 일부 글은 CBOX(구버전 댓글
+    시스템)가 라우팅 자체를 못 해서 원문은 하나도 못 가져와도, 콜렉터가
+    별도로 확인한 "진짜 개수"(comments_count)는 있을 수 있다(팀장님이 실제
+    화면 "댓글 4"와 대시보드 "0"의 격차를 지적해서 발견됨). 화면은
+    `max(len(동기화된 레코드), 이 값)`으로 표시해 원문을 다 못 가져왔어도
+    개수만큼은 진짜 값을 보여준다.
+
+    같은 content_id에 comments_count가 여러 번(여러 채널·여러 실행) 저장될
+    수 있어 **가장 최근 captured_at** 행 하나만 본다 — 오래된 값에 발목
+    잡히지 않게. 그 값이 None이면(예: 그 실행에서 댓글수 조회만 실패)
+    0으로 취급해 len()만 신뢰한다.
+    """
+    rows = [m for m in all_metrics if m["content_id"] == content_id and m.get("comments_count") is not None]
+    if not rows:
+        return 0
+    latest = max(rows, key=lambda m: m["captured_at"])
+    return latest["comments_count"]
+
+
 def likes_total(all_metrics: list[dict], contents: list[dict]) -> int:
     """인스타 좋아요 + 블로그 공감수 합(2026-09-11부터 블로그 편입 — 팀장님 지시:
     "수동입력 안 할 거니 총 조회수 카드도 고쳐야 한다"에 따라 블로그는 총
