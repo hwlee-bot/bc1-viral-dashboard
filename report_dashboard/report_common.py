@@ -38,7 +38,7 @@ from report_dashboard import share
 from report_dashboard.reporting import (
     channel_distribution, comment_count_floor, delta_over_days, exposure_counts_by_channel,
     keyword_impact_leaderboard, keyword_rank_summary, keyword_weekly_exposure_counts, keyword_weekly_view_sums,
-    latest_keyword_serp, latest_matched_ranks, latest_rank_row, latest_views, likes_history,
+    latest_keyword_serp, latest_matched_ranks, latest_rank_row, latest_reaction_value, latest_views, likes_history,
     participation_rate, rank_history, reaction_history, to_kst_label, week_label,
     NON_VIEW_METRIC_SOURCES, REACTION_SOURCE_BY_CHANNEL, TOP_EXPOSURE_RANK,
 )
@@ -92,8 +92,8 @@ def _primary_metric_value(content: dict, view_metrics: list[dict], all_metrics: 
     source = _REACTION_SOURCE_BY_CHANNEL.get(content["channel"])
     if source:
         cid = content["content_id"]
-        series = reaction_history([m for m in all_metrics if m["content_id"] == cid], source)
-        return series[-1][1] if series else 0
+        value = latest_reaction_value([m for m in all_metrics if m["content_id"] == cid], source)
+        return value or 0
     return latest_views(view_metrics, content["content_id"])
 
 
@@ -282,7 +282,10 @@ def content_detail_html(ctx, content_id: str) -> str:
         # 카드에서 그 자리를 반응 수로 바꾸자"는 팀장님 지시(2026-09-11).
         hist = reaction_history(metrics, reaction_source)
         series, dates = [v for _, v in hist], [d[:10] for d, _ in hist]
-        primary, primary_label = (series[-1] if series else None), _REACTION_UNIT_BY_CHANNEL[c["channel"]]
+        # 대표 지표는 history 마지막이 아니라 **최신 수집 행**의 값이다 — 최신 수집이
+        # 미취득이면 옛날에 잘못 저장된 값이 카드에 남으면 안 된다(2026-09-11 사고).
+        primary = latest_reaction_value(metrics, reaction_source)
+        primary_label = _REACTION_UNIT_BY_CHANNEL[c["channel"]]
         manual = [m for m in metrics if m.get("source") not in NON_VIEW_METRIC_SOURCES]
         third = (f"{manual[-1]['views']:,}", "조회수(참고)", "수동 입력") if manual else ("—", "조회수(참고)", "수동 입력 없음")
         # KPI 캡션(정확도·시각)은 primary 숫자를 만든 것과 같은 행에서 뽑는다(§8) —

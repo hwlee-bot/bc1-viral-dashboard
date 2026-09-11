@@ -214,6 +214,22 @@ def reaction_history(metrics_for_content: list[dict], source: str) -> list[tuple
     return [(date, by_date[date]) for date in sorted(by_date.keys())]
 
 
+def latest_reaction_value(metrics_for_content: list[dict], source: str) -> int | None:
+    """그 소스의 **가장 최근 수집 행**이 담고 있는 반응 수 — 없으면 None(미취득).
+
+    `reaction_history`의 마지막 값과 다르다: history는 값이 있는 행만 모으므로,
+    최신 수집이 "미취득(None)"이어도 **옛날에 잘못 저장된 값이 계속 살아남는다.**
+    실제로 이 차이로 사고가 났다(2026-09-11): 인스타가 좋아요 숨김 게시물에 주던
+    자리표시자 "3"을 안 쓰도록 고친 뒤에도, 예전에 저장된 3이 카드에 그대로
+    떠 있었다. **최신 관측이 "모른다"면 화면도 "모른다"여야 한다** — 그래서
+    대표 지표(primary)는 history 마지막이 아니라 이 함수를 쓴다.
+    """
+    rows = [m for m in metrics_for_content if m.get("source") == source]
+    if not rows:
+        return None
+    return max(rows, key=lambda m: m["captured_at"]).get("likes_count")
+
+
 def likes_history(metrics_for_content: list[dict]) -> list[tuple[str, int]]:
     """인스타 좋아요 수 이력 — reaction_history(..., "auto_instagram")의 얇은 별칭.
 
