@@ -13,7 +13,8 @@ import io
 import zipfile
 
 CAPTURE_TAB_LABEL = {"home": "홈", "blog": "블로그", "cafe": "카페"}
-CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "상위15"}  # top15는 과거 캡쳐 라벨용(2026-09-10 제거됨)
+# "full"은 과거(~2026-09-14) 캡쳐 데이터 표시용 하위호환 라벨 — 지금은 top15/bottom15로 분할 캡쳐한다.
+CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "1~15위", "bottom15": "16~30위"}
 
 
 def capture_dates(captures: list[dict]) -> list[str]:

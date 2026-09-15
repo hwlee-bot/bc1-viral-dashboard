@@ -77,7 +77,8 @@ if campaign_id is None:
 campaign = next(c for c in campaigns if c["campaign_id"] == campaign_id)
 
 _CAPTURE_TAB_LABEL = {"home": "홈", "blog": "블로그", "cafe": "카페"}
-_CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "상위15"}  # top15는 과거 캡쳐 라벨용(2026-09-10 제거됨)
+# "full"은 과거(~2026-09-14) 캡쳐 데이터 표시용 하위호환 라벨 — 지금은 top15/bottom15로 분할 캡쳐한다.
+_CAPTURE_TYPE_LABEL = {"full": "풀샷", "top15": "1~15위", "bottom15": "16~30위"}
 
 st.markdown(
     ui.section_header("노출 지면 캡쳐 검수", "이 키워드 목록은 캡쳐 전용이다 — 상위노출 리포트가 보는 키워드와는 별개로 여기서 관리한다."),
